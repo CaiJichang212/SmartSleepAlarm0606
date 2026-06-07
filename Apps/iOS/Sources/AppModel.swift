@@ -34,6 +34,7 @@ final class AlarmDashboardModel: ObservableObject {
                     try repository.save(item.alarm)
                 }
             }
+            userVisibleWarning = nil
         } catch {
             userVisibleWarning = "Failed to load alarms."
         }
