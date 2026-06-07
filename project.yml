@@ -15,6 +15,8 @@ targets:
       - path: Apps/iOS/Sources
     dependencies:
       - package: SmartSleepCore
+      - target: SmartSleepWatch
+        embed: true
     info:
       path: Apps/iOS/Info.plist
       properties:
@@ -55,8 +57,20 @@ targets:
         CFBundleShortVersionString: "0.2"
         CFBundleVersion: "1"
         WKApplication: true
+        WKCompanionAppBundleIdentifier: com.smartsleep.alarm
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.smartsleep.alarm.watch
         MARKETING_VERSION: "0.2"
         CURRENT_PROJECT_VERSION: "1"
+  SmartSleepWatchTests:
+    type: bundle.unit-test
+    platform: watchOS
+    sources:
+      - path: Apps/Watch/Tests
+    dependencies:
+      - target: SmartSleepWatch
+      - package: SmartSleepCore
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
