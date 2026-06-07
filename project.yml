@@ -30,6 +30,17 @@ targets:
         MARKETING_VERSION: "0.2"
         CURRENT_PROJECT_VERSION: "1"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+  SmartSleepAlarmTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Apps/iOS/Tests
+    dependencies:
+      - target: SmartSleepAlarm
+      - package: SmartSleepCore
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
   SmartSleepWatch:
     type: application
     platform: watchOS
@@ -49,4 +60,3 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.smartsleep.alarm.watch
         MARKETING_VERSION: "0.2"
         CURRENT_PROJECT_VERSION: "1"
-
