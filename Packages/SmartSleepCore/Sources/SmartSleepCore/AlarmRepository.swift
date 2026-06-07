@@ -1,13 +1,13 @@
 import Foundation
 
-public protocol AlarmRepository: Sendable {
+public protocol AlarmRepository {
     func list() throws -> [Alarm]
     func alarm(id: UUID) throws -> Alarm?
     func save(_ alarm: Alarm) throws
     func delete(id: UUID) throws
 }
 
-public final class MemoryAlarmRepository: AlarmRepository, @unchecked Sendable {
+public final class MemoryAlarmRepository: AlarmRepository {
     private var storage: [UUID: Alarm]
 
     public init(alarms: [Alarm] = []) {
