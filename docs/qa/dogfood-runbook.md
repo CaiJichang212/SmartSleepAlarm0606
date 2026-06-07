@@ -37,3 +37,15 @@ v0.2 default flags:
 - `maxReAlarmCount = 2`
 
 Auto silence and re-sleep detection can only be enabled for named internal test runs with exported logs.
+
+## v0.2 Device Integration Gate
+
+Before a dogfood run is counted as valid:
+
+- iPhone and Apple Watch are paired to the same Apple ID.
+- iPhone app has notification authorization.
+- Watch app shows a received alarm config before arming.
+- Watch arming failure with no config is recorded as `missing_alarm_config`.
+- iPhone fallback channel is recorded as `iOSLocalNotification`.
+- Exported JSONL contains at least one state transition and one channel event for the run.
+- Runtime-session result is recorded as success or `runtime_session_not_scheduled`.
