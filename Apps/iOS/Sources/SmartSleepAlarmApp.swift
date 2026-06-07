@@ -11,29 +11,34 @@ struct SmartSleepAlarmApp: App {
 }
 
 private struct AlarmDashboardView: View {
-    @State private var alarms: [AlarmCardState] = AlarmCardState.seed
+    @StateObject private var model = AlarmDashboardModel()
     @State private var isCreatingAlarm = false
-    @State private var exportedLogText = ""
 
     var body: some View {
         NavigationStack {
             List {
+                if let warning = model.userVisibleWarning {
+                    Section {
+                        Label(warning, systemImage: "exclamationmark.triangle")
+                    }
+                }
+
                 Section {
-                    ForEach(alarms) { alarm in
+                    ForEach(model.alarms) { alarm in
                         AlarmCard(alarm: alarm)
                     }
-                    .onDelete(perform: deleteAlarm)
+                    .onDelete(perform: model.delete)
                 }
 
                 Section("内部测试日志") {
                     Button {
-                        exportedLogText = LogPreviewBuilder.makePreview(for: alarms)
+                        model.exportPreview()
                     } label: {
                         Label("导出本地 JSON 预览", systemImage: "square.and.arrow.up")
                     }
 
-                    if !exportedLogText.isEmpty {
-                        Text(exportedLogText)
+                    if !model.exportedLogText.isEmpty {
+                        Text(model.exportedLogText)
                             .font(.caption.monospaced())
                             .textSelection(.enabled)
                             .lineLimit(8)
@@ -52,15 +57,10 @@ private struct AlarmDashboardView: View {
             }
             .sheet(isPresented: $isCreatingAlarm) {
                 CreateAlarmView { alarm in
-                    alarms.append(alarm)
-                    alarms.sort { $0.nextFireAt < $1.nextFireAt }
+                    model.create(alarm)
                 }
             }
         }
-    }
-
-    private func deleteAlarm(at offsets: IndexSet) {
-        alarms.remove(atOffsets: offsets)
     }
 }
 
@@ -184,7 +184,7 @@ private struct CreateAlarmView: View {
     }
 }
 
-private struct AlarmCardState: Identifiable, Equatable {
+struct AlarmCardState: Identifiable, Equatable {
     var id: UUID
     var alarm: Alarm
     var armingStatus: WatchArmingStatus?
@@ -218,6 +218,20 @@ private struct AlarmCardState: Identifiable, Equatable {
 
     var backupLabel: String {
         "Backup: \(alarm.backupChannelPreferred.rawValue)"
+    }
+
+    static func from(
+        alarm: Alarm,
+        armingStatus: WatchArmingStatus? = nil,
+        calendar: Calendar = .current,
+        now: Date = Date()
+    ) -> AlarmCardState {
+        let hour = alarm.timeOfDay.hour ?? 7
+        let minute = alarm.timeOfDay.minute ?? 30
+        let base = calendar.startOfDay(for: now)
+        let candidate = calendar.date(bySettingHour: hour, minute: minute, second: 0, of: base) ?? now
+        let nextFireAt = candidate > now ? candidate : calendar.date(byAdding: .day, value: 1, to: candidate) ?? candidate
+        return AlarmCardState(id: alarm.id, alarm: alarm, armingStatus: armingStatus, nextFireAt: nextFireAt)
     }
 
     static func make(nextFireAt: Date, label: String, smartEnabled: Bool, snoozeMinutes: Int) -> AlarmCardState {
@@ -265,7 +279,7 @@ private struct AlarmCardState: Identifiable, Equatable {
     }()
 }
 
-private enum LogPreviewBuilder {
+enum LogPreviewBuilder {
     static func makePreview(for alarms: [AlarmCardState]) -> String {
         let payload = alarms.map { alarm in
             [
@@ -282,4 +296,3 @@ private enum LogPreviewBuilder {
         return text
     }
 }
-
