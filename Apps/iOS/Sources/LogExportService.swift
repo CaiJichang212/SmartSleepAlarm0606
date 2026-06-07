@@ -6,7 +6,7 @@ protocol AlarmRunExporting {
 }
 
 struct LogExportService: AlarmRunExporting {
-    private let logsDirectory: URL
+    let logsDirectory: URL
 
     init(logsDirectory: URL) {
         self.logsDirectory = logsDirectory
