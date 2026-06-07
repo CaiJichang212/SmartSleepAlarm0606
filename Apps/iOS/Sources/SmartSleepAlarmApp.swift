@@ -30,11 +30,11 @@ private struct AlarmDashboardView: View {
                     .onDelete(perform: model.delete)
                 }
 
-                Section("内部测试日志") {
+                Section("内部测试预览") {
                     Button {
                         model.exportPreview()
                     } label: {
-                        Label("导出本地 JSON 预览", systemImage: "square.and.arrow.up")
+                        Label("导出闹铃 JSON 预览", systemImage: "square.and.arrow.up")
                     }
 
                     if !model.exportedLogText.isEmpty {
@@ -158,7 +158,7 @@ private struct CreateAlarmView: View {
 
                 Section("就绪规则") {
                     LabeledContent("Watch 武装", value: smartEnabled ? "创建后需要确认" : "不需要")
-                    LabeledContent("兜底通道", value: "iPhone AlarmKit 优先")
+                    LabeledContent("兜底通道", value: "iPhone 本地通知")
                 }
             }
             .navigationTitle("新增闹铃")
@@ -216,8 +216,12 @@ struct AlarmCardState: Identifiable, Equatable {
         smartStatus == .ready ? "applewatch.radiowaves.left.and.right" : "applewatch"
     }
 
+    var requiredBackupChannel: AlarmChannel {
+        AlarmSchedulerPolicy().decision(for: alarm, arming: armingStatus).requiredBackupChannel
+    }
+
     var backupLabel: String {
-        "Backup: \(alarm.backupChannelPreferred.rawValue)"
+        "Backup: \(requiredBackupChannel.rawValue)"
     }
 
     static func from(
@@ -249,7 +253,7 @@ struct AlarmCardState: Identifiable, Equatable {
             snoozeIntervalMin: snoozeMinutes,
             maxSnoozeCount: 3,
             maxReAlarmCount: 2,
-            backupChannelPreferred: .iOSAlarmKit
+            backupChannelPreferred: .iOSLocalNotification
         )
         return AlarmCardState(id: id, alarm: alarm, armingStatus: nil, nextFireAt: nextFireAt)
     }
@@ -262,7 +266,7 @@ struct AlarmCardState: Identifiable, Equatable {
             alarmId: ready.id,
             isArmed: true,
             sessionScheduled: true,
-            fallbackChannel: .iOSAlarmKit,
+            fallbackChannel: .iOSLocalNotification,
             failureReason: nil
         )
 
@@ -286,7 +290,7 @@ enum LogPreviewBuilder {
                 "alarmId": alarm.id.uuidString,
                 "label": alarm.label,
                 "smartStatus": alarm.smartStatus.rawValue,
-                "backupChannel": alarm.alarm.backupChannelPreferred.rawValue
+                "requiredBackupChannel": alarm.requiredBackupChannel.rawValue
             ]
         }
         guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]),
