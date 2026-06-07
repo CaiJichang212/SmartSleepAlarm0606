@@ -26,4 +26,17 @@ final class AlarmRunCoordinatorTests: XCTestCase {
         XCTAssertTrue(exported[0].contains("created_on_phone"))
         XCTAssertTrue(exported[1].contains("iOSLocalNotification"))
     }
+
+    func testCoordinatorDoesNotAdvanceStateWhenStateTransitionLogWriteFails() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let store = try JSONLAlarmEventStore(directory: directory)
+        try FileManager.default.removeItem(at: directory)
+        XCTAssertTrue(FileManager.default.createFile(atPath: directory.path, contents: Data()))
+
+        var coordinator = AlarmRunCoordinator(runId: UUID(), eventStore: store)
+
+        XCTAssertThrowsError(try coordinator.apply(.phoneCreatedAlarm, reason: "created_on_phone"))
+        XCTAssertEqual(coordinator.state, .idle)
+        XCTAssertEqual(try store.export(runId: coordinator.runId), [])
+    }
 }
