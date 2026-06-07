@@ -26,3 +26,14 @@
 - False re-alarm target below 10-15%.
 - Motion stale or Watch not worn must produce 0 false silences.
 
+## Feature Flags
+
+v0.2 default flags:
+
+- `autoSilenceEnabled = false`
+- `reSleepDetectionEnabled = false`
+- `gestureSnoozeEnabled = true`
+- `heartRateBoostEnabled = true`
+- `maxReAlarmCount = 2`
+
+Auto silence and re-sleep detection can only be enabled for named internal test runs with exported logs.
