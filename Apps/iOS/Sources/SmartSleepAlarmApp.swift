@@ -23,6 +23,20 @@ private struct AlarmDashboardView: View {
                     }
                 }
 
+                Section("通知") {
+                    LabeledContent("iPhone 兜底", value: notificationStatusText)
+
+                    if model.notificationAuthorizationState != .authorized {
+                        Button {
+                            Task {
+                                await model.requestNotificationAuthorization()
+                            }
+                        } label: {
+                            Label("允许通知", systemImage: "bell.badge")
+                        }
+                    }
+                }
+
                 Section {
                     ForEach(model.alarms) { alarm in
                         AlarmCard(alarm: alarm)
@@ -60,6 +74,21 @@ private struct AlarmDashboardView: View {
                     model.create(alarm)
                 }
             }
+        }
+    }
+
+    private var notificationStatusText: String {
+        switch model.notificationAuthorizationState {
+        case .authorized:
+            return "已授权"
+        case .denied:
+            return "已拒绝"
+        case .notDetermined:
+            return "待确认"
+        case .unavailable:
+            return "不可用"
+        case .unknown:
+            return "未知"
         }
     }
 }
