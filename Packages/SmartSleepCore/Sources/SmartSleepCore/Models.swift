@@ -201,6 +201,34 @@ public struct RuntimeSessionLog: Codable, Equatable, Sendable {
     public var didReachRingTime: Bool
     public var errorCode: String?
     public var errorMessage: String?
+
+    public init(
+        runId: UUID,
+        sessionType: String,
+        scheduledAt: Date,
+        targetStartAt: Date,
+        actualStartAt: Date?,
+        invalidatedAt: Date?,
+        invalidationReason: String?,
+        startLatencySec: Double?,
+        didStartBeforeAlarm: Bool,
+        didReachRingTime: Bool,
+        errorCode: String?,
+        errorMessage: String?
+    ) {
+        self.runId = runId
+        self.sessionType = sessionType
+        self.scheduledAt = scheduledAt
+        self.targetStartAt = targetStartAt
+        self.actualStartAt = actualStartAt
+        self.invalidatedAt = invalidatedAt
+        self.invalidationReason = invalidationReason
+        self.startLatencySec = startLatencySec
+        self.didStartBeforeAlarm = didStartBeforeAlarm
+        self.didReachRingTime = didReachRingTime
+        self.errorCode = errorCode
+        self.errorMessage = errorMessage
+    }
 }
 
 public struct AlarmChannelLog: Codable, Equatable, Sendable {
