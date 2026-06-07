@@ -28,11 +28,12 @@ public struct AlarmRunCoordinator: Sendable {
         timestamp: Date = Date()
     ) throws {
         let from = machine.state
-        try machine.apply(event)
+        var nextMachine = machine
+        try nextMachine.apply(event)
         let log = StateTransitionLog(
             runId: runId,
             fromState: from,
-            toState: machine.state,
+            toState: nextMachine.state,
             timestamp: timestamp,
             reason: reason,
             confidence: confidence,
@@ -40,6 +41,7 @@ public struct AlarmRunCoordinator: Sendable {
             errorCode: errorCode
         )
         try eventStore.append(.stateTransition(log), recordedAt: timestamp)
+        machine = nextMachine
     }
 
     public func appendChannelLog(_ log: AlarmChannelLog, timestamp: Date = Date()) throws {
