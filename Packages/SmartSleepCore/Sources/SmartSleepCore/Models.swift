@@ -362,7 +362,7 @@ public extension Alarm {
             snoozeIntervalMin: 9,
             maxSnoozeCount: 3,
             maxReAlarmCount: 2,
-            backupChannelPreferred: .iOSAlarmKit,
+            backupChannelPreferred: .iOSLocalNotification,
             createdAt: Date(timeIntervalSince1970: 0),
             updatedAt: Date(timeIntervalSince1970: 0)
         )
@@ -423,4 +423,3 @@ public extension SensorSummary {
     }
 }
 #endif
-
