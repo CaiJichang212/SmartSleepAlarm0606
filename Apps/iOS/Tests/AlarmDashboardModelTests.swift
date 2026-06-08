@@ -54,7 +54,7 @@ final class AlarmDashboardModelTests: XCTestCase {
 
         XCTAssertTrue(model.exportedLogText.contains("notification_not_authorized"))
         XCTAssertTrue(model.exportedLogText.contains("\"authorizationState\":\"denied\""))
-        XCTAssertEqual(model.userVisibleWarning, "iPhone fallback notifications are not authorized.")
+        XCTAssertEqual(model.userVisibleWarning, "No automatic iPhone fallback is authorized; ask the user to set a system alarm.")
         XCTAssertTrue(backupScheduler.scheduledAlarmIDs.isEmpty)
     }
 
@@ -89,6 +89,127 @@ final class AlarmDashboardModelTests: XCTestCase {
         model.delete(at: IndexSet(integer: index))
 
         XCTAssertEqual(backupScheduler.cancelledAlarmIDs, [created.id])
+    }
+
+    func testModelUpdatesExistingAlarmAndReschedulesFallback() async throws {
+        let repository = AlarmFileRepositoryAdapter(fileURL: temporaryFileURL())
+        let backupScheduler = RecordingBackupAlarmScheduler()
+        let connectivity = FakePhoneConnectivityClient()
+        let model = AlarmDashboardModel(
+            repository: repository,
+            notificationAuthorizer: FakeNotificationAuthorizer(state: .authorized),
+            backupScheduler: backupScheduler,
+            connectivity: connectivity,
+            runLogger: AlarmRunLogger(logsDirectory: temporaryDirectoryURL().appendingPathComponent("AlarmRuns", isDirectory: true))
+        )
+        let original = AlarmCardState.make(
+            nextFireAt: Date(timeIntervalSince1970: 3_600),
+            label: "Original",
+            smartEnabled: true,
+            snoozeMinutes: 9
+        )
+
+        await model.refreshNotificationAuthorization()
+        model.create(original)
+        await flushMainActorWork()
+
+        let edited = AlarmCardState.make(
+            id: original.id,
+            nextFireAt: Date(timeIntervalSince1970: 7_200),
+            label: "Edited",
+            smartEnabled: false,
+            snoozeMinutes: 12
+        )
+        model.update(edited)
+        await flushMainActorWork()
+
+        let persisted = try XCTUnwrap(repository.alarm(id: original.id))
+        XCTAssertEqual(persisted.label, "Edited")
+        XCTAssertFalse(persisted.smartEnabled)
+        XCTAssertEqual(persisted.snoozeIntervalMin, 12)
+        XCTAssertEqual(backupScheduler.cancelledAlarmIDs, [original.id])
+        XCTAssertEqual(backupScheduler.scheduledAlarmIDs.last, original.id)
+        XCTAssertTrue(connectivity.outboundOutbox.contains { message in
+            guard case let .alarmCancelled(alarmId) = message else { return false }
+            return alarmId == original.id
+        })
+    }
+
+    func testDisablingAlarmCancelsFallbackAndWatchConfig() async throws {
+        let repository = AlarmFileRepositoryAdapter(fileURL: temporaryFileURL())
+        let backupScheduler = RecordingBackupAlarmScheduler()
+        let connectivity = FakePhoneConnectivityClient()
+        let model = AlarmDashboardModel(
+            repository: repository,
+            notificationAuthorizer: FakeNotificationAuthorizer(state: .authorized),
+            backupScheduler: backupScheduler,
+            connectivity: connectivity,
+            runLogger: AlarmRunLogger(logsDirectory: temporaryDirectoryURL().appendingPathComponent("AlarmRuns", isDirectory: true))
+        )
+        let created = AlarmCardState.make(
+            nextFireAt: Date(timeIntervalSince1970: 3_600),
+            label: "Disable Me",
+            smartEnabled: true,
+            snoozeMinutes: 9
+        )
+
+        await model.refreshNotificationAuthorization()
+        model.create(created)
+        await flushMainActorWork()
+        model.setEnabled(false, alarmId: created.id)
+        await flushMainActorWork()
+
+        let persisted = try XCTUnwrap(repository.alarm(id: created.id))
+        XCTAssertFalse(persisted.isEnabled)
+        XCTAssertEqual(backupScheduler.cancelledAlarmIDs, [created.id])
+        XCTAssertTrue(connectivity.outboundOutbox.contains { message in
+            guard case let .alarmCancelled(alarmId) = message else { return false }
+            return alarmId == created.id
+        })
+    }
+
+    func testUpdatingAlarmToDisabledCancelsWatchConfig() async throws {
+        let repository = AlarmFileRepositoryAdapter(fileURL: temporaryFileURL())
+        let backupScheduler = RecordingBackupAlarmScheduler()
+        let connectivity = FakePhoneConnectivityClient()
+        let model = AlarmDashboardModel(
+            repository: repository,
+            notificationAuthorizer: FakeNotificationAuthorizer(state: .authorized),
+            backupScheduler: backupScheduler,
+            connectivity: connectivity,
+            runLogger: AlarmRunLogger(logsDirectory: temporaryDirectoryURL().appendingPathComponent("AlarmRuns", isDirectory: true))
+        )
+        let created = AlarmCardState.make(
+            nextFireAt: Date(timeIntervalSince1970: 3_600),
+            label: "Disable Via Edit",
+            smartEnabled: true,
+            snoozeMinutes: 9
+        )
+
+        await model.refreshNotificationAuthorization()
+        model.create(created)
+        await flushMainActorWork()
+
+        var edited = AlarmCardState.make(
+            id: created.id,
+            nextFireAt: Date(timeIntervalSince1970: 7_200),
+            label: "Disable Via Edit",
+            smartEnabled: true,
+            snoozeMinutes: 9
+        )
+        edited.alarm.isEnabled = false
+
+        model.update(edited)
+        await flushMainActorWork()
+
+        let persisted = try XCTUnwrap(repository.alarm(id: created.id))
+        XCTAssertFalse(persisted.isEnabled)
+        XCTAssertEqual(backupScheduler.cancelledAlarmIDs, [created.id])
+        XCTAssertEqual(backupScheduler.scheduledAlarmIDs, [created.id])
+        XCTAssertTrue(connectivity.outboundOutbox.contains { message in
+            guard case let .alarmCancelled(alarmId) = message else { return false }
+            return alarmId == created.id
+        })
     }
 
     func testModelSyncsSmartAlarmConfigToWatchAndCancelsOnDelete() async throws {
@@ -169,6 +290,32 @@ final class AlarmDashboardModelTests: XCTestCase {
             return XCTFail("expected created alarm to be present")
         }
         XCTAssertEqual(updated.smartStatus, .ready)
+    }
+
+    func testModelRecordsOutcomeFeedbackForLastRun() async throws {
+        let repository = AlarmFileRepositoryAdapter(fileURL: temporaryFileURL())
+        let logsDirectory = temporaryDirectoryURL().appendingPathComponent("AlarmRuns", isDirectory: true)
+        let model = AlarmDashboardModel(
+            repository: repository,
+            notificationAuthorizer: FakeNotificationAuthorizer(state: .authorized),
+            backupScheduler: RecordingBackupAlarmScheduler(),
+            runLogger: AlarmRunLogger(logsDirectory: logsDirectory)
+        )
+        let created = AlarmCardState.make(
+            nextFireAt: Date(timeIntervalSince1970: 3_600),
+            label: "Feedback",
+            smartEnabled: true,
+            snoozeMinutes: 9
+        )
+
+        await model.refreshNotificationAuthorization()
+        model.create(created)
+        await flushMainActorWork()
+        model.recordFeedback(.falseSilence, notes: "Detected while still asleep.")
+
+        XCTAssertTrue(model.exportedLogText.contains("outcome"))
+        XCTAssertTrue(model.exportedLogText.contains("\"falseSilenceReported\":true"))
+        XCTAssertTrue(model.exportedLogText.contains("Detected while still asleep."))
     }
 
     func testModelSeedsEmptyRepositoryUsingLocalNotificationFallback() throws {
