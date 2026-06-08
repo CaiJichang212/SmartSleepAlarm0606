@@ -39,7 +39,7 @@ private struct WatchArmingView: View {
                     Button {
                         model.armCurrentAlarm()
                     } label: {
-                        Label(model.sessionScheduled ? "已武装" : "今晚启用", systemImage: model.sessionScheduled ? "checkmark.seal.fill" : "bolt.badge.clock")
+                        Label(model.sessionScheduled ? "已就绪" : "今晚启用", systemImage: model.sessionScheduled ? "checkmark.seal.fill" : "bolt.badge.clock")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)

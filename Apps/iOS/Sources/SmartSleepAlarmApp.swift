@@ -186,7 +186,7 @@ private struct CreateAlarmView: View {
                 Stepper("贪睡 \(snoozeMinutes) 分钟", value: $snoozeMinutes, in: 5...20)
 
                 Section("就绪规则") {
-                    LabeledContent("Watch 武装", value: smartEnabled ? "创建后需要确认" : "不需要")
+                    LabeledContent("Watch 启用确认", value: smartEnabled ? "创建后需要确认" : "不需要")
                     LabeledContent("兜底通道", value: "iPhone 本地通知")
                 }
             }
@@ -233,8 +233,8 @@ struct AlarmCardState: Identifiable, Equatable {
 
     var watchStatusLabel: String {
         switch smartStatus {
-        case .ready: "Watch armed"
-        case .needsWatchArming: "Watch needs arming"
+        case .ready: "Watch 已就绪"
+        case .needsWatchArming: "等待 Watch 确认"
         case .fallbackOnly: "Runtime failed"
         case .failed: "Unavailable"
         case .smartOff: "Smart disabled"
