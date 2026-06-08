@@ -4,6 +4,7 @@ import SmartSleepCore
 protocol AlarmRunLogging {
     func recordAlarmCreated(runId: UUID) throws
     func recordChannelLog(_ log: AlarmChannelLog) throws
+    func recordOutcome(_ outcome: OutcomeLabel) throws
     func export(runId: UUID) throws -> String
 }
 
@@ -19,6 +20,11 @@ struct AlarmRunLogger: AlarmRunLogging {
     func recordChannelLog(_ log: AlarmChannelLog) throws {
         let store = try JSONLAlarmEventStore(directory: logsDirectory)
         try store.append(.channel(log))
+    }
+
+    func recordOutcome(_ outcome: OutcomeLabel) throws {
+        let store = try JSONLAlarmEventStore(directory: logsDirectory)
+        try store.append(.outcome(outcome), recordedAt: outcome.labeledAt)
     }
 
     func export(runId: UUID) throws -> String {
