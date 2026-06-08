@@ -5,6 +5,7 @@ import WatchKit
 protocol RuntimeSessionScheduling: AnyObject {
     var latestLog: RuntimeSessionLog? { get }
     var onLogUpdated: ((RuntimeSessionLog) -> Void)? { get set }
+    var onRuntimeStarted: ((RuntimeSessionLog) -> Void)? { get set }
     func schedule(for payload: AlarmConfigPayload, runId: UUID) -> RuntimeSessionLog
     func invalidate()
 }
@@ -19,6 +20,7 @@ final class FakeRuntimeSessionScheduler: RuntimeSessionScheduling {
         }
     }
     var onLogUpdated: ((RuntimeSessionLog) -> Void)?
+    var onRuntimeStarted: ((RuntimeSessionLog) -> Void)?
     private(set) var invalidateCallCount = 0
     private(set) var lastRunID: UUID?
 
@@ -53,6 +55,11 @@ final class FakeRuntimeSessionScheduler: RuntimeSessionScheduling {
     func emitInvalidation(_ log: RuntimeSessionLog) {
         latestLog = log
     }
+
+    func emitStart(_ log: RuntimeSessionLog) {
+        latestLog = log
+        onRuntimeStarted?(log)
+    }
 }
 
 final class WatchRuntimeSessionScheduler: NSObject, ObservableObject, RuntimeSessionScheduling {
@@ -64,6 +71,7 @@ final class WatchRuntimeSessionScheduler: NSObject, ObservableObject, RuntimeSes
         }
     }
     var onLogUpdated: ((RuntimeSessionLog) -> Void)?
+    var onRuntimeStarted: ((RuntimeSessionLog) -> Void)?
 
     private var session: WKExtendedRuntimeSession?
 
@@ -114,6 +122,7 @@ extension WatchRuntimeSessionScheduler: WKExtendedRuntimeSessionDelegate {
             log.startLatencySec = now.timeIntervalSince(log.targetStartAt)
             log.didStartBeforeAlarm = true
             latestLog = log
+            onRuntimeStarted?(log)
         }
     }
 
