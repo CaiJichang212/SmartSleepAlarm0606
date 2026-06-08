@@ -28,4 +28,13 @@ final class AlarmSchedulerPolicyTests: XCTestCase {
         XCTAssertTrue(decision.shouldSchedulePhoneBackup)
         XCTAssertEqual(decision.requiredBackupChannel, .iOSLocalNotification)
     }
+
+    func testDefaultFallbackDecisionUsesUnknownNotificationState() {
+        let alarm = Alarm.fixture(smartEnabled: true)
+        let decision = AlarmSchedulerPolicy().decision(for: alarm, arming: nil)
+
+        XCTAssertEqual(decision.fallbackUserVisibleState, "notification_authorization_unknown")
+        XCTAssertNil(decision.fallbackRiskMessage)
+        XCTAssertFalse(decision.requiresManualFallbackPrompt)
+    }
 }
