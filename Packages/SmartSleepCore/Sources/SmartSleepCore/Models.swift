@@ -280,6 +280,30 @@ public struct SensorFreshness: Codable, Equatable, Sendable {
     public var watchWornConfidence: ConfidenceLevel
     public var sensorConfidence: ConfidenceLevel
 
+    public init(
+        runId: UUID,
+        timestamp: Date,
+        motionSampleCount: Int,
+        motionLastSampleAgeSec: Double,
+        hrSampleCount: Int,
+        hrLastSampleAgeSec: Double?,
+        baselineHRConfidence: ConfidenceLevel,
+        baselineMotionConfidence: ConfidenceLevel,
+        watchWornConfidence: ConfidenceLevel,
+        sensorConfidence: ConfidenceLevel
+    ) {
+        self.runId = runId
+        self.timestamp = timestamp
+        self.motionSampleCount = motionSampleCount
+        self.motionLastSampleAgeSec = motionLastSampleAgeSec
+        self.hrSampleCount = hrSampleCount
+        self.hrLastSampleAgeSec = hrLastSampleAgeSec
+        self.baselineHRConfidence = baselineHRConfidence
+        self.baselineMotionConfidence = baselineMotionConfidence
+        self.watchWornConfidence = watchWornConfidence
+        self.sensorConfidence = sensorConfidence
+    }
+
     public var motionFresh: Bool {
         motionLastSampleAgeSec <= 2
     }
@@ -309,6 +333,46 @@ public struct SensorSummary: Codable, Equatable, Sendable {
     public var missingDataDurationSec: Double
     public var batteryDelta: Double
     public var hrDeltaFromBaseline: Double?
+
+    public init(
+        runId: UUID,
+        windowStart: Date,
+        windowEnd: Date,
+        baselineHR: Double?,
+        baselineMotion: Double,
+        accelMagnitudeMean: Double,
+        accelMagnitudeStd: Double,
+        gyroMagnitudeMean: Double,
+        gyroPeak: Double,
+        postureDelta: Double,
+        motionContinuitySec: Double,
+        stillnessDurationSec: Double,
+        stepDelta: Int,
+        screenWakeCount: Int,
+        interactionCount: Int,
+        missingDataDurationSec: Double,
+        batteryDelta: Double,
+        hrDeltaFromBaseline: Double?
+    ) {
+        self.runId = runId
+        self.windowStart = windowStart
+        self.windowEnd = windowEnd
+        self.baselineHR = baselineHR
+        self.baselineMotion = baselineMotion
+        self.accelMagnitudeMean = accelMagnitudeMean
+        self.accelMagnitudeStd = accelMagnitudeStd
+        self.gyroMagnitudeMean = gyroMagnitudeMean
+        self.gyroPeak = gyroPeak
+        self.postureDelta = postureDelta
+        self.motionContinuitySec = motionContinuitySec
+        self.stillnessDurationSec = stillnessDurationSec
+        self.stepDelta = stepDelta
+        self.screenWakeCount = screenWakeCount
+        self.interactionCount = interactionCount
+        self.missingDataDurationSec = missingDataDurationSec
+        self.batteryDelta = batteryDelta
+        self.hrDeltaFromBaseline = hrDeltaFromBaseline
+    }
 }
 
 public struct StateTransitionLog: Codable, Equatable, Sendable {
@@ -373,6 +437,36 @@ public struct OutcomeLabel: Codable, Equatable, Sendable {
     public var userReportedAwake: Bool
     public var notes: String?
     public var labeledAt: Date
+
+    public init(
+        runId: UUID,
+        manualStop: Bool,
+        manualSnooze: Bool,
+        gestureSnooze: Bool,
+        autoSilenceAccepted: Bool,
+        falseSilenceReported: Bool,
+        falseReAlarmReported: Bool,
+        missedAlarmReported: Bool,
+        fallbackUsed: Bool,
+        userReportedStillAsleep: Bool,
+        userReportedAwake: Bool,
+        notes: String?,
+        labeledAt: Date
+    ) {
+        self.runId = runId
+        self.manualStop = manualStop
+        self.manualSnooze = manualSnooze
+        self.gestureSnooze = gestureSnooze
+        self.autoSilenceAccepted = autoSilenceAccepted
+        self.falseSilenceReported = falseSilenceReported
+        self.falseReAlarmReported = falseReAlarmReported
+        self.missedAlarmReported = missedAlarmReported
+        self.fallbackUsed = fallbackUsed
+        self.userReportedStillAsleep = userReportedStillAsleep
+        self.userReportedAwake = userReportedAwake
+        self.notes = notes
+        self.labeledAt = labeledAt
+    }
 }
 
 #if DEBUG
