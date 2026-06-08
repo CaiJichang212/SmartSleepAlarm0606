@@ -49,3 +49,18 @@ Before a dogfood run is counted as valid:
 - iPhone fallback channel is recorded as `iOSLocalNotification`.
 - Exported JSONL contains at least one state transition and one channel event for the run.
 - Runtime-session result is recorded as success or `runtime_session_not_scheduled`.
+
+## P0 Reliability Chain Gate
+
+Before enabling auto silence or re-sleep detection for dogfood, complete this sequence on paired real devices:
+
+1. Create an iPhone alarm with Smart Mode on.
+2. Confirm the iPhone card shows `Needs Watch Arming`.
+3. Arm the alarm on Watch.
+4. Confirm the iPhone card shows `Ready` only after Watch reports `sessionScheduled == true`.
+5. Confirm iPhone fallback channel log is written before the alarm time.
+6. Confirm Watch enters `PRE_MONITORING` after runtime start.
+7. Confirm Watch enters `RINGING` at the scheduled alarm time without pressing the dogfood simulate button.
+8. Confirm stopping or snoozing records an outcome or channel event.
+9. Deny notification authorization and confirm the app shows a manual fallback prompt instead of implying reliable Smart Mode.
+10. Export JSONL and verify state transition, channel, runtime, sensor freshness, and outcome records are present.
