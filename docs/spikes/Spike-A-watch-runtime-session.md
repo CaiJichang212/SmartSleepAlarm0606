@@ -2,7 +2,7 @@
 
 ## Goal
 
-Verify whether Watch arming can schedule and start a runtime session early enough for pre-monitoring.
+Verify whether Watch enable confirmation can schedule and start a runtime session early enough for pre-monitoring.
 
 ## Matrix
 

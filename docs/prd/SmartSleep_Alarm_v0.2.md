@@ -13,7 +13,7 @@
 
 v0.2 对 v0.1 的核心修订如下。
 
-1. 将“iPhone 设置闹铃后 Apple Watch 自动进入监测”改为“iPhone 创建闹铃 + Watch 端当晚/当次武装确认 + Watch 端预约 Smart Alarm runtime session”。在 Watch 端未完成武装前，Smart Mode 不显示为 Ready。
+1. 将“iPhone 设置闹铃后 Apple Watch 自动进入监测”改为“iPhone 创建闹铃 + Watch 端当晚/当次启用确认 + Watch 端预约 Smart Alarm runtime session”。在 Watch 端未完成启用确认前，Smart Mode 不显示为 Ready。
 2. 将“普通闹铃兜底”细化为明确通道：iOS 26+ 优先使用 AlarmKit 作为 iPhone 侧兜底；不满足条件时降级为 iOS Local Notification / 前台音频 / 用户明确风险提示。不得把第三方 Watch 闹铃写成系统闹钟同等级保证。
 3. 将“动作 + 心率判断清醒”改为 motion-first。CoreMotion 动作/姿态是主信号；HealthKit 心率只作为机会性增强信号，并且只有在样本足够新鲜时才参与评分。心率不得单独触发自动静音。
 4. 将“3 秒确认窗口自动静音”改为“两阶段确认”：短窗口进入 `AWAKE_CANDIDATE`，随后 10–20 秒高置信度确认。低置信度继续响铃或进入低扰确认，不自动静音。
@@ -49,17 +49,17 @@ Apple 自带睡眠/闹钟具备更强系统集成，例如 Sleep Focus、系统 
 - 第三方 watchOS runtime session + 本地 haptic/audio 能力；
 - 普通 iOS Local Notification 能力。
 
-### 2.2 Watch 端必须显式武装，不默认全自动后台接管
+### 2.2 Watch 端必须显式启用确认，不默认全自动后台接管
 
-v0.1 中“用户在 iPhone 上设置闹铃，Apple Watch 在闹铃前进入监测”的表达过于乐观。v0.2 改为：用户在 iPhone 创建闹铃后，Watch 端必须完成“今晚启用/已武装”动作；Watch 端成功预约 runtime session 后，iPhone 和 Watch 才显示 `Smart Mode Ready`。
+v0.1 中“用户在 iPhone 上设置闹铃，Apple Watch 在闹铃前进入监测”的表达过于乐观。v0.2 改为：用户在 iPhone 创建闹铃后，Watch 端必须完成“今晚启用/已就绪”动作；Watch 端成功预约 runtime session 后，iPhone 和 Watch 才显示 `Smart Mode Ready`。
 
 v0.2 的工程约束：
 
 - iPhone 可以创建、编辑、同步闹铃；
 - Watch 必须负责确认佩戴、权限、电量、session 预约结果；
-- Watch 未完成武装时，不允许 UI 暗示智能监测已就绪；
+- Watch 未完成启用确认时，不允许 UI 暗示智能监测已就绪；
 - Watch session 未成功预约时，必须自动转入 iPhone 兜底通道；
-- 重复闹铃每天/每次是否需要重新武装，必须通过 spike 验证后决定。
+- 重复闹铃每天/每次是否需要重新启用确认，必须通过 spike 验证后决定。
 
 ### 2.3 AlarmKit 是 iPhone 兜底，不是 Watch 实时睡眠监测方案
 
@@ -203,7 +203,7 @@ SmartSleep Alarm 是一款 Apple Watch 起床确认型智能闹铃。
 ### 4.2 核心体验
 
 1. 用户在 iPhone 上设置闹铃。
-2. Watch 提醒用户当晚/当次完成智能闹铃武装。
+2. Watch 提醒用户当晚/当次完成智能闹铃启用确认。
 3. Watch 在闹铃前进入预监测窗口，采集动作和姿态，心率仅作辅助。
 4. 到点响铃/震动；iPhone 侧设置兜底闹铃。
 5. 用户仍睡着或无法确认已醒时，闹铃继续。
@@ -248,11 +248,11 @@ SmartSleep Alarm 是一款 Apple Watch 起床确认型智能闹铃。
 
 ### 6.1 项目目标
 
-v0.2 的目标是验证 Apple 生态下的智能闹铃链路可行性：用户在 iPhone 创建闹铃后，需要在 Watch 端完成当晚/当次“已武装”；Watch 通过 runtime session 预约预监测窗口，motion-first 采集腕部动作与姿态，到点触发 Watch haptic/audio，同时 iPhone 侧通过 AlarmKit 或降级通道作为兜底。只有在高置信度清醒时才自动静音；低置信度继续响。静音后 5 分钟进行再睡风险监测，高风险才重响。所有状态转换、传感器新鲜度、闹铃通道和用户结果都写入本地日志。
+v0.2 的目标是验证 Apple 生态下的智能闹铃链路可行性：用户在 iPhone 创建闹铃后，需要在 Watch 端完成当晚/当次“已就绪”；Watch 通过 runtime session 预约预监测窗口，motion-first 采集腕部动作与姿态，到点触发 Watch haptic/audio，同时 iPhone 侧通过 AlarmKit 或降级通道作为兜底。只有在高置信度清醒时才自动静音；低置信度继续响。静音后 5 分钟进行再睡风险监测，高风险才重响。所有状态转换、传感器新鲜度、闹铃通道和用户结果都写入本地日志。
 
 ### 6.2 v0.2 要验证的核心假设
 
-H1：用户可以接受“iPhone 创建 + Watch 当晚/当次武装”的轻量流程，只要 UI 明确显示已就绪。  
+H1：用户可以接受“iPhone 创建 + Watch 当晚/当次启用确认”的轻量流程，只要 UI 明确显示已就绪。
 H2：Watch runtime session 能在足够多的真实场景下按时进入预监测。  
 H3：motion-first 足以识别一部分高置信度醒来场景，从而安全自动静音。  
 H4：自动静音误判率可以控制在内部 dogfood 可接受范围内。  
@@ -286,7 +286,7 @@ H6：iPhone 兜底通道能覆盖 Watch session 未启动、Watch 未佩戴、Wa
 - 权限引导：通知、AlarmKit、HealthKit、Motion、Watch 安装检查；
 - 将闹铃配置同步到 Watch；
 - 创建 iPhone 侧兜底闹铃；
-- 展示 Smart Mode 状态：未设置、需 Watch 武装、已武装、兜底中、失败；
+- 展示 Smart Mode 状态：未设置、需 Watch 启用确认、已就绪、兜底中、失败；
 - 展示运行日志和用户反馈入口；
 - 提供导出日志能力，供内部测试使用。
 
@@ -295,7 +295,7 @@ H6：iPhone 兜底通道能覆盖 Watch session 未启动、Watch 未佩戴、Wa
 职责：
 
 - 接收 iOS 闹铃配置；
-- Watch 端“今晚启用/武装”确认；
+- Watch 端“今晚启用/启用确认”确认；
 - 预约 runtime session；
 - 进入预监测窗口；
 - 采集 CoreMotion 动作/旋转/姿态信号；
@@ -309,7 +309,7 @@ H6：iPhone 兜底通道能覆盖 Watch session 未启动、Watch 未佩戴、Wa
 职责：
 
 - iPhone -> Watch：同步闹铃配置、删除/禁用状态、铃声/震动配置、贪睡间隔；
-- Watch -> iPhone：同步武装结果、session 结果、运行日志、最终 outcome；
+- Watch -> iPhone：同步启用确认结果、session 结果、运行日志、最终 outcome；
 - 断连场景：Watch 必须能独立响铃/震动；iPhone 必须能独立触发兜底闹铃。
 
 ### 7.2 闹铃通道定义
@@ -343,35 +343,35 @@ v0.2 不允许使用含糊的“普通闹铃兜底”说法，必须记录具体
 - 创建闹铃：时间、重复周期、标签、是否开启 Smart Mode、贪睡间隔、兜底通道偏好。
 - 编辑/删除/启用/禁用闹铃。
 - 闹铃列表按下一次触发时间排序。
-- 列表中展示：下一次时间、Smart Mode 状态、Watch 武装状态、iPhone 兜底状态。
-- 若 Smart Mode 开启但 Watch 未武装，显示 `Needs Watch Arming`，不得显示 `Ready`。
+- 列表中展示：下一次时间、Smart Mode 状态、Watch 就绪状态、iPhone 兜底状态。
+- 若 Smart Mode 开启但 Watch 未完成启用确认，显示 `需在 Watch 上启用`，不得显示 `Ready`。
 - 若 AlarmKit 未授权或系统不支持，显示兜底风险提示。
 - 创建闹铃后立即尝试同步到 Watch；同步失败时保留 iPhone 兜底。
 
 验收标准：
 
 - 用户能在 iPhone 完成闹铃 CRUD。
-- UI 能准确区分 `Smart Off`、`Needs Watch Arming`、`Ready`、`Fallback Only`、`Failed`。
+- UI 能准确区分 `Smart Off`、`需在 Watch 上启用`、`Ready`、`Fallback Only`、`Failed`。
 - 删除/禁用闹铃时，iOS 兜底和 Watch 配置都被取消或标记无效。
 
-### FR-2 Watch 端武装与就绪确认
+### FR-2 Watch 端启用确认与就绪确认
 
 优先级：P0。
 
 需求：
 
-- Watch 收到 iPhone 闹铃配置后，展示“今晚启用/武装”入口。
+- Watch 收到 iPhone 闹铃配置后，展示“今晚启用/启用确认”入口。
 - 用户在 Watch 端确认后，App 检查：电量、佩戴状态、权限、下一次闹铃时间、session 可预约性。
 - Watch 成功预约 runtime session 后，状态进入 `SESSION_SCHEDULED`。
 - Watch 端显示下一次闹铃时间和 `Smart Mode Ready`。
-- iPhone 收到 Watch 成功武装回执后，列表状态更新为 `Ready`。
+- iPhone 收到 Watch 启用确认成功回执后，列表状态更新为 `Ready`。
 - 若预约失败，进入 `SESSION_NOT_SCHEDULED`，并启用 iPhone 兜底。
-- 是否允许一次武装多个闹铃、重复闹铃是否每天需重新武装，列入 spike，不在 v0.2 预设。
+- 是否允许一次确认多个闹铃、重复闹铃是否每天需重新启用确认，列入 spike，不在 v0.2 预设。
 
 验收标准：
 
-- Watch 成功武装后，iPhone 和 Watch 状态一致。
-- Watch 未武装时，iPhone 不误导用户 Smart Mode 已就绪。
+- Watch 启用确认成功后，iPhone 和 Watch 状态一致。
+- Watch 未完成启用确认时，iPhone 不误导用户 Smart Mode 已就绪。
 - Watch session 失败时，iPhone 兜底通道状态可见且日志可查。
 
 ### FR-3 Watch 端预监测
@@ -986,9 +986,9 @@ OutcomeLabel(
 
 ## 12. 技术 Spike 计划
 
-### Spike A：Watch 端武装与 runtime session
+### Spike A：Watch 端启用确认与 runtime session
 
-目标：验证 Watch 端当晚/当次武装是否能稳定预约并按时进入预监测。
+目标：验证 Watch 端当晚/当次启用确认是否能稳定预约并按时进入预监测。
 
 测试项：
 
@@ -996,7 +996,7 @@ OutcomeLabel(
 - 多个闹铃；
 - 重复闹铃；
 - 距离闹铃 5 分钟、30 分钟、8 小时、24 小时；
-- Watch App 前台武装后退出；
+- Watch App 前台完成启用确认后退出；
 - Watch 锁屏；
 - Watch 重启；
 - App 被用户 force quit；
@@ -1192,7 +1192,7 @@ OutcomeLabel(
 - HealthKit 未授权不应关闭 motion-only Smart Mode。
 - Motion 不可用必须关闭自动静音和手势贪睡。
 - AlarmKit 未授权必须显示兜底风险。
-- Watch 未武装不允许显示 Smart Mode Ready。
+- Watch 未完成启用确认不允许显示 Smart Mode Ready。
 
 ---
 
@@ -1200,13 +1200,13 @@ OutcomeLabel(
 
 ### v0.2：技术可行性 MVP
 
-目标：完成 iOS + watchOS 链路、Watch 武装、runtime session、motion-first 自动静音实验、再睡风险实验、手势贪睡、iPhone 兜底、日志回放。
+目标：完成 iOS + watchOS 链路、Watch 启用确认、runtime session、motion-first 自动静音实验、再睡风险实验、手势贪睡、iPhone 兜底、日志回放。
 
 发布对象：内部 dogfood / 极小范围 TestFlight。
 
 ### v0.3：稳定性与阈值调优
 
-目标：基于 v0.2 日志调优阈值；改善 Watch 武装体验；优化低扰提醒；完善误判反馈闭环。
+目标：基于 v0.2 日志调优阈值；改善 Watch 启用确认体验；优化低扰提醒；完善误判反馈闭环。
 
 可新增：更细的 complication、就寝前提醒、简单结果页。
 
@@ -1227,7 +1227,7 @@ OutcomeLabel(
 ### R1：Watch runtime session 无法稳定按时启动
 
 影响：Smart Mode 不可靠。  
-应对：Watch 端武装确认、session 日志、iPhone AlarmKit 兜底、用户风险提示。
+应对：Watch 端启用确认、session 日志、iPhone AlarmKit 兜底、用户风险提示。
 
 ### R2：第三方 Watch 音频/触觉在部分模式下不可靠
 
@@ -1286,7 +1286,7 @@ OutcomeLabel(
 
 | v0.1 表述/问题 | v0.2 修订 |
 |---|---|
-| iPhone 设置后 Watch 自动进入监测 | iPhone 创建 + Watch 当晚/当次武装 + session 预约成功后才 Ready |
+| iPhone 设置后 Watch 自动进入监测 | iPhone 创建 + Watch 当晚/当次启用确认 + session 预约成功后才 Ready |
 | 普通闹铃兜底 | 拆分为 iOSAlarmKit、iOSLocalNotification、watchLocalNotification、foregroundAudio、manualFallbackPrompt |
 | HealthKit 未授权则普通闹铃 | HealthKit 未授权只禁用心率增强，保留 motion-only Smart Mode |
 | 心率参与清醒判断 | 心率只作机会性增强，样本 stale 时不参与，不能单独触发 |

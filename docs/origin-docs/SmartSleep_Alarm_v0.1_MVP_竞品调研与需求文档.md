@@ -26,7 +26,7 @@
 - 相似点：Apple Watch 原生 Smart Alarm；浅睡唤醒；时间窗口；Early Wake；腕上触觉提醒；支持 iPhone 端周计划。
 - 优点：与 SmartSleep 技术路线最接近；Watch 端可独立运行；提供 1–28 分钟唤醒窗口和逐分钟 arousal 触觉策略。
 - 缺点/机会：主要目标是“在浅睡时叫醒”，不是“响铃后自动判断已醒并静音”；官方说明仍要求每天在 Watch 上启用一次，暴露系统限制。
-- 可借鉴：重点参考 Watch 端 alarm-first 设计、时间窗口配置、arousal 触觉、Watch 表盘 complication 显示“已武装”。同时把“每日启用/系统限制”作为 v0.1 必测风险。
+- 可借鉴：重点参考 Watch 端 alarm-first 设计、时间窗口配置、arousal 触觉、Watch 表盘 complication 显示“已就绪”。同时把“每日启用/系统限制”作为 v0.1 必测风险。
 
 ### Pillow
 - 平台：iOS + Apple Watch + iPad
