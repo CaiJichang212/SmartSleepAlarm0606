@@ -22,7 +22,7 @@ final class AlarmDashboardModel: ObservableObject {
     init(
         repository: AlarmRepository,
         notificationAuthorizer: NotificationAuthorizing = NotificationPermissionService(),
-        backupScheduler: BackupAlarmScheduling = BackupAlarmScheduler(),
+        backupScheduler: BackupAlarmScheduling = RoutingBackupAlarmScheduler(),
         connectivity: PhoneConnectivityClient = IOSConnectivityService(),
         runLogger: AlarmRunLogging = AlarmRunLogger.temporary()
     ) {
@@ -100,6 +100,61 @@ final class AlarmDashboardModel: ObservableObject {
         }
     }
 
+    func update(_ alarm: AlarmCardState) {
+        do {
+            backupScheduler.cancelBackup(for: alarm.id)
+            try repository.save(alarm.alarm)
+            if !alarm.alarm.smartEnabled || !alarm.alarm.isEnabled {
+                connectivity.cancelAlarm(id: alarm.id)
+            }
+            reload()
+            guard let persisted = alarms.first(where: { $0.id == alarm.id }) else { return }
+            let runId = runIDs[alarm.id] ?? UUID()
+            runIDs[alarm.id] = runId
+            lastExportedRunID = runId
+            scheduleFallbackIfNeeded(for: persisted, runId: runId)
+            if persisted.alarm.smartEnabled && persisted.alarm.isEnabled {
+                connectivity.sendAlarmConfig(AlarmConfigPayload(
+                    alarm: persisted.alarm,
+                    nextFireAt: persisted.nextFireAt
+                ))
+            }
+        } catch {
+            userVisibleWarning = "Failed to update alarm."
+            exportedLogText = #"{"error":"failed_to_update_alarm"}"#
+        }
+    }
+
+    func setEnabled(_ isEnabled: Bool, alarmId: UUID) {
+        do {
+            guard var alarm = try repository.alarm(id: alarmId) else { return }
+            alarm.isEnabled = isEnabled
+            alarm.updatedAt = Date()
+            try repository.save(alarm)
+
+            if isEnabled {
+                reload()
+                guard let persisted = alarms.first(where: { $0.id == alarmId }) else { return }
+                let runId = runIDs[alarmId] ?? UUID()
+                runIDs[alarmId] = runId
+                lastExportedRunID = runId
+                scheduleFallbackIfNeeded(for: persisted, runId: runId)
+                if persisted.alarm.smartEnabled {
+                    connectivity.sendAlarmConfig(AlarmConfigPayload(
+                        alarm: persisted.alarm,
+                        nextFireAt: persisted.nextFireAt
+                    ))
+                }
+            } else {
+                backupScheduler.cancelBackup(for: alarmId)
+                connectivity.cancelAlarm(id: alarmId)
+                reload()
+            }
+        } catch {
+            userVisibleWarning = isEnabled ? "Failed to enable alarm." : "Failed to disable alarm."
+        }
+    }
+
     func delete(at offsets: IndexSet) {
         let ids = offsets.map { alarms[$0].id }
         do {
@@ -136,26 +191,70 @@ final class AlarmDashboardModel: ObservableObject {
         exportedLogText = LogPreviewBuilder.makePreview(for: alarms)
     }
 
-    private func scheduleFallbackIfNeeded(for item: AlarmCardState, runId: UUID) {
-        let decision = schedulerPolicy.decision(for: item.alarm, arming: item.armingStatus)
-        guard decision.shouldSchedulePhoneBackup else { return }
+    func recordFeedback(_ outcome: OutcomeKind, notes: String?) {
+        guard let lastExportedRunID else {
+            userVisibleWarning = "No alarm run is available for feedback."
+            return
+        }
+        let label = OutcomeLabel(
+            runId: lastExportedRunID,
+            manualStop: outcome == .userStopped,
+            manualSnooze: outcome == .userSnoozed,
+            gestureSnooze: false,
+            autoSilenceAccepted: outcome == .wokeUp,
+            falseSilenceReported: outcome == .falseSilence,
+            falseReAlarmReported: outcome == .falseReAlarm,
+            missedAlarmReported: outcome == .missedAlarm,
+            fallbackUsed: false,
+            userReportedStillAsleep: outcome == .falseSilence,
+            userReportedAwake: outcome == .wokeUp || outcome == .falseReAlarm,
+            notes: notes,
+            labeledAt: Date()
+        )
+        do {
+            try runLogger.recordOutcome(label)
+            exportedLogText = (try? runLogger.export(runId: lastExportedRunID)) ?? ""
+        } catch {
+            userVisibleWarning = "Failed to record feedback."
+        }
+    }
 
+    private func scheduleFallbackIfNeeded(for item: AlarmCardState, runId: UUID) {
         Task { @MainActor in
             let authorizationState = await authorizationStateForScheduling()
+            let capabilities = BackupChannelCapabilities(
+                alarmKitSupported: false,
+                alarmKitAuthorization: .unavailable,
+                notificationAuthorization: authorizationState,
+                foregroundAudioAvailable: false
+            )
+            let decision = schedulerPolicy.decision(
+                for: item.alarm,
+                arming: item.armingStatus,
+                capabilities: capabilities
+            )
+            guard decision.shouldSchedulePhoneBackup else { return }
+
             do {
                 let log = try await backupScheduler.scheduleBackup(
                     for: item.alarm,
                     nextFireAt: item.nextFireAt,
                     runId: runId,
-                    authorizationState: authorizationState
+                    authorizationState: authorizationState,
+                    requiredChannel: decision.requiredBackupChannel,
+                    userVisibleState: decision.fallbackUserVisibleState
                 )
                 try runLogger.recordChannelLog(log)
                 exportedLogText = (try? runLogger.export(runId: runId)) ?? encodedFallback(log)
-                updateFallbackWarning(for: log)
+                if let riskMessage = decision.fallbackRiskMessage {
+                    userVisibleWarning = riskMessage
+                } else {
+                    updateFallbackWarning(for: log)
+                }
             } catch {
                 let failedLog = AlarmChannelLog(
                     runId: runId,
-                    channel: .iOSLocalNotification,
+                    channel: decision.requiredBackupChannel,
                     scheduledAt: Date(),
                     firedAt: nil,
                     stoppedAt: nil,
@@ -163,7 +262,7 @@ final class AlarmDashboardModel: ObservableObject {
                     cancelledAt: nil,
                     authorizationState: authorizationState,
                     failureReason: "notification_schedule_failed",
-                    userVisibleState: "schedule_failed"
+                    userVisibleState: decision.fallbackUserVisibleState
                 )
                 try? runLogger.recordChannelLog(failedLog)
                 exportedLogText = (try? runLogger.export(runId: runId)) ?? encodedFallback(failedLog)
