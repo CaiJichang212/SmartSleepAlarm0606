@@ -132,4 +132,105 @@ final class WatchAppModelTests: XCTestCase {
         XCTAssertEqual(model.failureReason, "runtime_session_invalidated")
         XCTAssertEqual(connectivity.outboundMessages.count, 4)
     }
+
+    func testRuntimeStartAndMotionStaleAreRecordedAsStateTransitions() async {
+        let alarm = Alarm.fixture(smartEnabled: true)
+        let payload = AlarmConfigPayload(
+            alarm: alarm,
+            nextFireAt: Date(timeIntervalSince1970: 3_600)
+        )
+        let connectivity = FakeWatchConnectivityClient(latestAlarmConfig: payload)
+        let runtimeScheduler = FakeRuntimeSessionScheduler(shouldSucceed: true)
+        let ringer = FakeWatchAlarmRinger()
+        let logger = FakeWatchAlarmRunLogger()
+        let sensorSampler = FakeWatchSensorSampler()
+        let model = WatchAppModel(
+            connectivity: connectivity,
+            runtimeScheduler: runtimeScheduler,
+            ringer: ringer,
+            runLogger: logger,
+            sensorSampler: sensorSampler
+        )
+
+        model.armCurrentAlarm()
+        let runId = try! XCTUnwrap(runtimeScheduler.lastRunID)
+        runtimeScheduler.emitStart(
+            RuntimeSessionLog(
+                runId: runId,
+                sessionType: "fakeSmartAlarmPreMonitoring",
+                scheduledAt: Date(timeIntervalSince1970: 0),
+                targetStartAt: Date(timeIntervalSince1970: 0),
+                actualStartAt: Date(timeIntervalSince1970: 1),
+                invalidatedAt: nil,
+                invalidationReason: nil,
+                startLatencySec: 1,
+                didStartBeforeAlarm: true,
+                didReachRingTime: false,
+                errorCode: nil,
+                errorMessage: nil
+            )
+        )
+        sensorSampler.emitFreshness(
+            SensorFreshness(
+                runId: runId,
+                timestamp: Date(timeIntervalSince1970: 2),
+                motionSampleCount: 5,
+                motionLastSampleAgeSec: 3,
+                hrSampleCount: 0,
+                hrLastSampleAgeSec: nil,
+                baselineHRConfidence: .none,
+                baselineMotionConfidence: .low,
+                watchWornConfidence: .medium,
+                sensorConfidence: .low
+            )
+        )
+        await flushMainActorWork()
+
+        XCTAssertEqual(model.currentState, .ringingNoSmart)
+        XCTAssertEqual(logger.stateTransitionLogs.map(\.toState), [.sessionScheduled, .preMonitoring, .ringingNoSmart])
+    }
+
+    func testRuntimeInvalidationIsRecordedAsStateTransition() {
+        let alarm = Alarm.fixture(smartEnabled: true)
+        let payload = AlarmConfigPayload(
+            alarm: alarm,
+            nextFireAt: Date(timeIntervalSince1970: 3_600)
+        )
+        let connectivity = FakeWatchConnectivityClient(latestAlarmConfig: payload)
+        let runtimeScheduler = FakeRuntimeSessionScheduler(shouldSucceed: true)
+        let logger = FakeWatchAlarmRunLogger()
+        let model = WatchAppModel(
+            connectivity: connectivity,
+            runtimeScheduler: runtimeScheduler,
+            ringer: FakeWatchAlarmRinger(),
+            runLogger: logger
+        )
+
+        model.armCurrentAlarm()
+        runtimeScheduler.emitInvalidation(
+            RuntimeSessionLog(
+                runId: runtimeScheduler.lastRunID ?? UUID(),
+                sessionType: "fakeSmartAlarmPreMonitoring",
+                scheduledAt: Date(timeIntervalSince1970: 0),
+                targetStartAt: Date(timeIntervalSince1970: 0),
+                actualStartAt: Date(timeIntervalSince1970: 10),
+                invalidatedAt: Date(timeIntervalSince1970: 20),
+                invalidationReason: "expired",
+                startLatencySec: 10,
+                didStartBeforeAlarm: true,
+                didReachRingTime: false,
+                errorCode: "runtime_session_invalidated",
+                errorMessage: "expired"
+            )
+        )
+
+        XCTAssertEqual(logger.stateTransitionLogs.last?.toState, .fallbackPhoneAlarm)
+        XCTAssertEqual(logger.stateTransitionLogs.last?.errorCode, "runtime_session_invalidated")
+    }
+
+    private func flushMainActorWork() async {
+        for _ in 0..<3 {
+            await Task.yield()
+        }
+    }
 }
