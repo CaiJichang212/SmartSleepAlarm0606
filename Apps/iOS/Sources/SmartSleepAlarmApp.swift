@@ -12,7 +12,7 @@ struct SmartSleepAlarmApp: App {
 
 private struct AlarmDashboardView: View {
     @StateObject private var model = AlarmDashboardModel()
-    @State private var isCreatingAlarm = false
+    @State private var editorAlarm: AlarmCardState?
 
     var body: some View {
         NavigationStack {
@@ -40,6 +40,9 @@ private struct AlarmDashboardView: View {
                 Section {
                     ForEach(model.alarms) { alarm in
                         AlarmCard(alarm: alarm)
+                            .onTapGesture {
+                                editorAlarm = alarm
+                            }
                     }
                     .onDelete(perform: model.delete)
                 }
@@ -49,6 +52,30 @@ private struct AlarmDashboardView: View {
                         model.exportPreview()
                     } label: {
                         Label("导出闹铃 JSON 预览", systemImage: "square.and.arrow.up")
+                    }
+
+                    Button {
+                        model.recordFeedback(.wokeUp, notes: "User reported awake during dogfood.")
+                    } label: {
+                        Label("标注：已醒", systemImage: "checkmark.circle")
+                    }
+
+                    Button {
+                        model.recordFeedback(.falseSilence, notes: "User reported false silence during dogfood.")
+                    } label: {
+                        Label("标注：误静音", systemImage: "exclamationmark.circle")
+                    }
+
+                    Button {
+                        model.recordFeedback(.falseReAlarm, notes: "User reported false re-alarm during dogfood.")
+                    } label: {
+                        Label("标注：误重响", systemImage: "bell.badge")
+                    }
+
+                    Button {
+                        model.recordFeedback(.missedAlarm, notes: "User reported missed alarm during dogfood.")
+                    } label: {
+                        Label("标注：没响", systemImage: "xmark.octagon")
                     }
 
                     if !model.exportedLogText.isEmpty {
@@ -63,15 +90,24 @@ private struct AlarmDashboardView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        isCreatingAlarm = true
+                        editorAlarm = AlarmCardState.make(
+                            nextFireAt: Date.now.addingTimeInterval(3600),
+                            label: "Morning",
+                            smartEnabled: true,
+                            snoozeMinutes: 9
+                        )
                     } label: {
                         Label("新增闹铃", systemImage: "plus")
                     }
                 }
             }
-            .sheet(isPresented: $isCreatingAlarm) {
-                CreateAlarmView { alarm in
-                    model.create(alarm)
+            .sheet(item: $editorAlarm) { alarm in
+                EditAlarmView(alarm: alarm) { edited in
+                    if model.alarms.contains(where: { $0.id == edited.id }) {
+                        model.update(edited)
+                    } else {
+                        model.create(edited)
+                    }
                 }
             }
         }
@@ -112,6 +148,11 @@ private struct AlarmCard: View {
             HStack(spacing: 8) {
                 Label(alarm.watchStatusLabel, systemImage: alarm.watchIcon)
                 Label(alarm.backupLabel, systemImage: "iphone")
+                if !alarm.alarm.isEnabled {
+                    Label("Disabled", systemImage: "power")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -167,21 +208,34 @@ private struct StatusBadge: View {
     }
 }
 
-private struct CreateAlarmView: View {
+private struct EditAlarmView: View {
     @Environment(\.dismiss) private var dismiss
 
-    @State private var nextFireAt = Date.now.addingTimeInterval(3600)
-    @State private var label = "Morning"
-    @State private var smartEnabled = true
-    @State private var snoozeMinutes = 9
+    @State private var nextFireAt: Date
+    @State private var label: String
+    @State private var isEnabled: Bool
+    @State private var smartEnabled: Bool
+    @State private var snoozeMinutes: Int
 
-    let onCreate: (AlarmCardState) -> Void
+    let alarm: AlarmCardState
+    let onSave: (AlarmCardState) -> Void
+
+    init(alarm: AlarmCardState, onSave: @escaping (AlarmCardState) -> Void) {
+        self.alarm = alarm
+        self.onSave = onSave
+        _nextFireAt = State(initialValue: alarm.nextFireAt)
+        _label = State(initialValue: alarm.label)
+        _isEnabled = State(initialValue: alarm.alarm.isEnabled)
+        _smartEnabled = State(initialValue: alarm.alarm.smartEnabled)
+        _snoozeMinutes = State(initialValue: alarm.alarm.snoozeIntervalMin)
+    }
 
     var body: some View {
         NavigationStack {
             Form {
                 DatePicker("时间", selection: $nextFireAt, displayedComponents: .hourAndMinute)
                 TextField("标签", text: $label)
+                Toggle("启用", isOn: $isEnabled)
                 Toggle("Smart Mode", isOn: $smartEnabled)
                 Stepper("贪睡 \(snoozeMinutes) 分钟", value: $snoozeMinutes, in: 5...20)
 
@@ -190,7 +244,7 @@ private struct CreateAlarmView: View {
                     LabeledContent("兜底通道", value: "iPhone 本地通知")
                 }
             }
-            .navigationTitle("新增闹铃")
+            .navigationTitle("闹铃")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消") {
@@ -198,13 +252,17 @@ private struct CreateAlarmView: View {
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("创建") {
-                        onCreate(AlarmCardState.make(
+                    Button("保存") {
+                        var edited = AlarmCardState.make(
+                            id: alarm.id,
                             nextFireAt: nextFireAt,
                             label: label,
                             smartEnabled: smartEnabled,
                             snoozeMinutes: snoozeMinutes
-                        ))
+                        )
+                        edited.alarm.isEnabled = isEnabled
+                        edited.alarm.updatedAt = Date()
+                        onSave(edited)
                         dismiss()
                     }
                 }
@@ -267,8 +325,13 @@ struct AlarmCardState: Identifiable, Equatable {
         return AlarmCardState(id: alarm.id, alarm: alarm, armingStatus: armingStatus, nextFireAt: nextFireAt)
     }
 
-    static func make(nextFireAt: Date, label: String, smartEnabled: Bool, snoozeMinutes: Int) -> AlarmCardState {
-        let id = UUID()
+    static func make(
+        id: UUID,
+        nextFireAt: Date,
+        label: String,
+        smartEnabled: Bool,
+        snoozeMinutes: Int
+    ) -> AlarmCardState {
         let components = Calendar.current.dateComponents([.hour, .minute], from: nextFireAt)
         let alarm = Alarm(
             id: id,
@@ -285,6 +348,16 @@ struct AlarmCardState: Identifiable, Equatable {
             backupChannelPreferred: .iOSLocalNotification
         )
         return AlarmCardState(id: id, alarm: alarm, armingStatus: nil, nextFireAt: nextFireAt)
+    }
+
+    static func make(nextFireAt: Date, label: String, smartEnabled: Bool, snoozeMinutes: Int) -> AlarmCardState {
+        make(
+            id: UUID(),
+            nextFireAt: nextFireAt,
+            label: label,
+            smartEnabled: smartEnabled,
+            snoozeMinutes: snoozeMinutes
+        )
     }
 
     static let seed: [AlarmCardState] = {
