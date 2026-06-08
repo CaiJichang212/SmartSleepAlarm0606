@@ -3,6 +3,53 @@ import XCTest
 import SmartSleepCore
 
 final class BackupAlarmSchedulerTests: XCTestCase {
+    @MainActor
+    func testRoutingSchedulerRecordsManualFallbackWhenNoChannelIsAvailable() async throws {
+        let scheduler = RoutingBackupAlarmScheduler(
+            localNotificationScheduler: RecordingBackupAlarmScheduler(),
+            alarmKitScheduler: RecordingBackupAlarmScheduler()
+        )
+        let alarm = Alarm.fixture(smartEnabled: true)
+        let runId = UUID()
+
+        let log = try await scheduler.scheduleBackup(
+            for: alarm,
+            nextFireAt: Date(timeIntervalSince1970: 3_600),
+            runId: runId,
+            authorizationState: .denied,
+            requiredChannel: .manualFallbackPrompt,
+            userVisibleState: "manual_system_alarm_required"
+        )
+
+        XCTAssertEqual(log.channel, .manualFallbackPrompt)
+        XCTAssertEqual(log.failureReason, "manual_fallback_required")
+        XCTAssertEqual(log.userVisibleState, "manual_system_alarm_required")
+    }
+
+    @MainActor
+    func testRoutingSchedulerUsesAlarmKitSchedulerWhenRequired() async throws {
+        let local = RecordingBackupAlarmScheduler()
+        let alarmKit = RecordingBackupAlarmScheduler(recordedChannel: .iOSAlarmKit)
+        let scheduler = RoutingBackupAlarmScheduler(
+            localNotificationScheduler: local,
+            alarmKitScheduler: alarmKit
+        )
+        let alarm = Alarm.fixture(smartEnabled: true)
+
+        let log = try await scheduler.scheduleBackup(
+            for: alarm,
+            nextFireAt: Date(timeIntervalSince1970: 3_600),
+            runId: UUID(),
+            authorizationState: .authorized,
+            requiredChannel: .iOSAlarmKit,
+            userVisibleState: "alarmkit_ready"
+        )
+
+        XCTAssertEqual(log.channel, .iOSAlarmKit)
+        XCTAssertEqual(local.scheduledAlarmIDs, [])
+        XCTAssertEqual(alarmKit.scheduledAlarmIDs, [alarm.id])
+    }
+
     func testRepeatingAlarmBuildsOneRequestPerWeekday() throws {
         var alarm = Alarm.fixture(smartEnabled: true)
         alarm.repeatDays = [.monday, .wednesday, .friday]
