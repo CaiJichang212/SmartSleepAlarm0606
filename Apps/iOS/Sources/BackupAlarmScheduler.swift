@@ -7,7 +7,9 @@ protocol BackupAlarmScheduling {
         for alarm: Alarm,
         nextFireAt: Date,
         runId: UUID,
-        authorizationState: AuthorizationState
+        authorizationState: AuthorizationState,
+        requiredChannel: AlarmChannel,
+        userVisibleState: String
     ) async throws -> AlarmChannelLog
     func cancelBackup(for alarmId: UUID)
 }
@@ -15,17 +17,24 @@ protocol BackupAlarmScheduling {
 final class RecordingBackupAlarmScheduler: BackupAlarmScheduling {
     private(set) var scheduledAlarmIDs: [UUID] = []
     private(set) var cancelledAlarmIDs: [UUID] = []
+    private let recordedChannel: AlarmChannel
+
+    init(recordedChannel: AlarmChannel = .iOSLocalNotification) {
+        self.recordedChannel = recordedChannel
+    }
 
     func scheduleBackup(
         for alarm: Alarm,
         nextFireAt: Date,
         runId: UUID,
-        authorizationState: AuthorizationState
+        authorizationState: AuthorizationState,
+        requiredChannel: AlarmChannel,
+        userVisibleState: String
     ) async throws -> AlarmChannelLog {
-        guard authorizationState == .authorized else {
+        guard authorizationState == .authorized || requiredChannel == .iOSAlarmKit else {
             return AlarmChannelLog(
                 runId: runId,
-                channel: .iOSLocalNotification,
+                channel: requiredChannel,
                 scheduledAt: Date(),
                 firedAt: nil,
                 stoppedAt: nil,
@@ -33,13 +42,14 @@ final class RecordingBackupAlarmScheduler: BackupAlarmScheduling {
                 cancelledAt: nil,
                 authorizationState: authorizationState,
                 failureReason: "notification_not_authorized",
-                userVisibleState: "not_authorized"
+                userVisibleState: userVisibleState
             )
         }
+
         scheduledAlarmIDs.append(alarm.id)
         return AlarmChannelLog(
             runId: runId,
-            channel: .iOSLocalNotification,
+            channel: recordedChannel,
             scheduledAt: Date(),
             firedAt: nil,
             stoppedAt: nil,
@@ -47,7 +57,7 @@ final class RecordingBackupAlarmScheduler: BackupAlarmScheduling {
             cancelledAt: nil,
             authorizationState: authorizationState,
             failureReason: nil,
-            userVisibleState: "scheduled"
+            userVisibleState: userVisibleState
         )
     }
 
@@ -56,13 +66,30 @@ final class RecordingBackupAlarmScheduler: BackupAlarmScheduling {
     }
 }
 
-struct BackupAlarmScheduler: BackupAlarmScheduling {
+struct LocalNotificationBackupAlarmScheduler: BackupAlarmScheduling {
     func scheduleBackup(
         for alarm: Alarm,
         nextFireAt: Date,
         runId: UUID,
-        authorizationState: AuthorizationState
+        authorizationState: AuthorizationState,
+        requiredChannel: AlarmChannel,
+        userVisibleState: String
     ) async throws -> AlarmChannelLog {
+        guard requiredChannel == .iOSLocalNotification else {
+            return AlarmChannelLog(
+                runId: runId,
+                channel: requiredChannel,
+                scheduledAt: Date(),
+                firedAt: nil,
+                stoppedAt: nil,
+                snoozedAt: nil,
+                cancelledAt: nil,
+                authorizationState: authorizationState,
+                failureReason: "local_notification_scheduler_wrong_channel",
+                userVisibleState: userVisibleState
+            )
+        }
+
         guard authorizationState == .authorized else {
             return AlarmChannelLog(
                 runId: runId,
@@ -74,7 +101,7 @@ struct BackupAlarmScheduler: BackupAlarmScheduling {
                 cancelledAt: nil,
                 authorizationState: authorizationState,
                 failureReason: "notification_not_authorized",
-                userVisibleState: "not_authorized"
+                userVisibleState: userVisibleState
             )
         }
 
@@ -93,7 +120,7 @@ struct BackupAlarmScheduler: BackupAlarmScheduling {
             cancelledAt: nil,
             authorizationState: authorizationState,
             failureReason: nil,
-            userVisibleState: "scheduled"
+            userVisibleState: userVisibleState
         )
     }
 
@@ -149,6 +176,99 @@ struct BackupAlarmScheduler: BackupAlarmScheduling {
         return "backup-\(alarmId.uuidString)"
     }
 }
+
+struct RoutingBackupAlarmScheduler: BackupAlarmScheduling {
+    let localNotificationScheduler: BackupAlarmScheduling
+    let alarmKitScheduler: BackupAlarmScheduling
+
+    init(
+        localNotificationScheduler: BackupAlarmScheduling = LocalNotificationBackupAlarmScheduler(),
+        alarmKitScheduler: BackupAlarmScheduling = AlarmKitBackupAlarmScheduler()
+    ) {
+        self.localNotificationScheduler = localNotificationScheduler
+        self.alarmKitScheduler = alarmKitScheduler
+    }
+
+    func scheduleBackup(
+        for alarm: Alarm,
+        nextFireAt: Date,
+        runId: UUID,
+        authorizationState: AuthorizationState,
+        requiredChannel: AlarmChannel,
+        userVisibleState: String
+    ) async throws -> AlarmChannelLog {
+        switch requiredChannel {
+        case .iOSAlarmKit:
+            return try await alarmKitScheduler.scheduleBackup(
+                for: alarm,
+                nextFireAt: nextFireAt,
+                runId: runId,
+                authorizationState: authorizationState,
+                requiredChannel: requiredChannel,
+                userVisibleState: userVisibleState
+            )
+        case .iOSLocalNotification:
+            return try await localNotificationScheduler.scheduleBackup(
+                for: alarm,
+                nextFireAt: nextFireAt,
+                runId: runId,
+                authorizationState: authorizationState,
+                requiredChannel: requiredChannel,
+                userVisibleState: userVisibleState
+            )
+        case .manualFallbackPrompt:
+            return AlarmChannelLog(
+                runId: runId,
+                channel: .manualFallbackPrompt,
+                scheduledAt: Date(),
+                firedAt: nil,
+                stoppedAt: nil,
+                snoozedAt: nil,
+                cancelledAt: nil,
+                authorizationState: authorizationState,
+                failureReason: "manual_fallback_required",
+                userVisibleState: userVisibleState
+            )
+        case .foregroundAudio:
+            return AlarmChannelLog(
+                runId: runId,
+                channel: .foregroundAudio,
+                scheduledAt: Date(),
+                firedAt: nil,
+                stoppedAt: nil,
+                snoozedAt: nil,
+                cancelledAt: nil,
+                authorizationState: authorizationState,
+                failureReason: "foreground_audio_requires_open_app",
+                userVisibleState: userVisibleState
+            )
+        case .watchRuntimeHapticAudio, .watchLocalNotification:
+            return AlarmChannelLog(
+                runId: runId,
+                channel: requiredChannel,
+                scheduledAt: Date(),
+                firedAt: nil,
+                stoppedAt: nil,
+                snoozedAt: nil,
+                cancelledAt: nil,
+                authorizationState: .unavailable,
+                failureReason: "not_an_iphone_backup_channel",
+                userVisibleState: userVisibleState
+            )
+        }
+    }
+
+    func cancelBackup(for alarmId: UUID) {
+        localNotificationScheduler.cancelBackup(for: alarmId)
+        alarmKitScheduler.cancelBackup(for: alarmId)
+    }
+
+    static func makeRequests(for alarm: Alarm, nextFireAt: Date) -> [UNNotificationRequest] {
+        LocalNotificationBackupAlarmScheduler.makeRequests(for: alarm, nextFireAt: nextFireAt)
+    }
+}
+
+typealias BackupAlarmScheduler = RoutingBackupAlarmScheduler
 
 private extension Weekday {
     var calendarWeekday: Int {
