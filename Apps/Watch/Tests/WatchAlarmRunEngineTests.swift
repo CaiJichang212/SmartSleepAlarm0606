@@ -79,6 +79,8 @@ final class WatchAlarmRunEngineTests: XCTestCase {
     func testReSleepEvaluationDoesNothingWithDefaultFlags() {
         let ringer = FakeWatchAlarmRinger()
         let engine = WatchAlarmRunEngine(ringer: ringer)
+        let logger = FakeWatchAlarmRunLogger()
+        let runId = UUID()
         let freshness = SensorFreshness.fixture(
             motionLastSampleAgeSec: 1,
             hrLastSampleAgeSec: nil,
@@ -93,22 +95,63 @@ final class WatchAlarmRunEngineTests: XCTestCase {
             interactionCount: 0,
             hrDeltaFromBaseline: nil
         )
+        summary.runId = runId
         summary.stillnessDurationSec = 180
 
-        engine.autoSilenceConfirmed(at: Date(timeIntervalSince1970: 0))
+        engine.runtimeDidStart(RuntimeSessionLog(
+            runId: runId,
+            sessionType: "smartAlarmPreMonitoring",
+            scheduledAt: Date(timeIntervalSince1970: 0),
+            targetStartAt: Date(timeIntervalSince1970: 10),
+            actualStartAt: Date(timeIntervalSince1970: 11),
+            invalidatedAt: nil,
+            invalidationReason: nil,
+            startLatencySec: 1,
+            didStartBeforeAlarm: true,
+            didReachRingTime: false,
+            errorCode: nil,
+            errorMessage: nil
+        ), nextFireAt: Date(timeIntervalSince1970: 20), runLogger: logger)
+        engine.ringTimeReached(runLogger: logger, at: Date(timeIntervalSince1970: 20))
+        var awakeFreshness = freshness
+        awakeFreshness.runId = runId
+        awakeFreshness.timestamp = Date(timeIntervalSince1970: 20)
+        var awakeSummary = SensorSummary.fixture(
+            motionContinuitySec: 12,
+            postureDelta: 50,
+            gyroPeak: 3,
+            stepDelta: 1,
+            interactionCount: 1,
+            hrDeltaFromBaseline: nil
+        )
+        awakeSummary.runId = runId
+        _ = engine.evaluateAwake(
+            summary: awakeSummary,
+            freshness: awakeFreshness,
+            now: Date(timeIntervalSince1970: 21),
+            runLogger: logger
+        )
+        _ = engine.evaluateAwake(
+            summary: awakeSummary,
+            freshness: awakeFreshness,
+            now: Date(timeIntervalSince1970: 35),
+            runLogger: logger
+        )
+
         let result = engine.evaluateReSleep(
             summary: summary,
-            freshness: freshness,
+            freshness: awakeFreshness,
             now: Date(timeIntervalSince1970: 180)
         )
 
         XCTAssertNil(result)
-        XCTAssertEqual(engine.state, .sessionScheduled)
-        XCTAssertEqual(ringer.startCallCount, 0)
+        XCTAssertEqual(engine.state, .ringing)
+        XCTAssertEqual(ringer.startCallCount, 1)
     }
 
     func testReSleepEvaluationReRingsWhenFlagsEnabledAndRiskHigh() {
         let ringer = FakeWatchAlarmRinger()
+        let logger = FakeWatchAlarmRunLogger()
         let flags = FeatureFlags(
             autoSilenceEnabled: true,
             reSleepDetectionEnabled: true,
@@ -131,17 +174,64 @@ final class WatchAlarmRunEngineTests: XCTestCase {
             interactionCount: 0,
             hrDeltaFromBaseline: nil
         )
+        let runId = UUID()
+        summary.runId = runId
         summary.stillnessDurationSec = 180
 
-        engine.autoSilenceConfirmed(at: Date(timeIntervalSince1970: 0))
+        engine.runtimeDidStart(RuntimeSessionLog(
+            runId: runId,
+            sessionType: "smartAlarmPreMonitoring",
+            scheduledAt: Date(timeIntervalSince1970: 0),
+            targetStartAt: Date(timeIntervalSince1970: 10),
+            actualStartAt: Date(timeIntervalSince1970: 11),
+            invalidatedAt: nil,
+            invalidationReason: nil,
+            startLatencySec: 1,
+            didStartBeforeAlarm: true,
+            didReachRingTime: false,
+            errorCode: nil,
+            errorMessage: nil
+        ), nextFireAt: Date(timeIntervalSince1970: 20), runLogger: logger)
+        engine.ringTimeReached(runLogger: logger, at: Date(timeIntervalSince1970: 20))
+        var awakeSummary = SensorSummary.fixture(
+            motionContinuitySec: 12,
+            postureDelta: 50,
+            gyroPeak: 3,
+            stepDelta: 1,
+            interactionCount: 1,
+            hrDeltaFromBaseline: nil
+        )
+        awakeSummary.runId = runId
+        var awakeFreshness = SensorFreshness.fixture(
+            motionLastSampleAgeSec: 1,
+            hrLastSampleAgeSec: nil,
+            baselineHRConfidence: .none,
+            watchWornConfidence: .medium
+        )
+        awakeFreshness.runId = awakeSummary.runId
+        _ = engine.evaluateAwake(
+            summary: awakeSummary,
+            freshness: awakeFreshness,
+            now: Date(timeIntervalSince1970: 21),
+            runLogger: logger
+        )
+        _ = engine.evaluateAwake(
+            summary: awakeSummary,
+            freshness: awakeFreshness,
+            now: Date(timeIntervalSince1970: 35),
+            runLogger: logger
+        )
+        var reSleepFreshness = freshness
+        reSleepFreshness.runId = runId
+
         let result = engine.evaluateReSleep(
             summary: summary,
-            freshness: freshness,
+            freshness: reSleepFreshness,
             now: Date(timeIntervalSince1970: 180)
         )
 
         XCTAssertEqual(engine.state, .reRinging)
-        XCTAssertEqual(ringer.startCallCount, 1)
+        XCTAssertEqual(ringer.startCallCount, 2)
         XCTAssertEqual(result?.shouldReRing, true)
     }
 
@@ -269,6 +359,94 @@ final class WatchAlarmRunEngineTests: XCTestCase {
         XCTAssertEqual(ringer.stopCallCount, 0)
     }
 
+    func testSnoozeFromAwakeCandidateStopsRingingAndRecordsSnoozedState() {
+        let ringer = FakeWatchAlarmRinger()
+        let logger = FakeWatchAlarmRunLogger()
+        let flags = FeatureFlags(
+            autoSilenceEnabled: true,
+            reSleepDetectionEnabled: false,
+            gestureSnoozeEnabled: true,
+            heartRateBoostEnabled: true,
+            maxReAlarmCount: 2
+        )
+        let engine = WatchAlarmRunEngine(ringer: ringer, featureFlags: flags)
+        let runId = UUID()
+        engine.runtimeDidStart(RuntimeSessionLog(
+            runId: runId,
+            sessionType: "smartAlarmPreMonitoring",
+            scheduledAt: Date(timeIntervalSince1970: 0),
+            targetStartAt: Date(timeIntervalSince1970: 0),
+            actualStartAt: Date(timeIntervalSince1970: 1),
+            invalidatedAt: nil,
+            invalidationReason: nil,
+            startLatencySec: 1,
+            didStartBeforeAlarm: true,
+            didReachRingTime: false,
+            errorCode: nil,
+            errorMessage: nil
+        ), nextFireAt: Date(timeIntervalSince1970: 20), runLogger: logger)
+        engine.ringTimeReached(runLogger: logger, at: Date(timeIntervalSince1970: 20))
+        let (summary, freshness) = makeAwakeCandidateInputs(runId: runId)
+        _ = engine.evaluateAwake(
+            summary: summary,
+            freshness: freshness,
+            now: Date(timeIntervalSince1970: 23),
+            runLogger: logger
+        )
+
+        engine.snooze(runLogger: logger, at: Date(timeIntervalSince1970: 24))
+
+        XCTAssertEqual(engine.state, .snoozed)
+        XCTAssertEqual(ringer.snoozeCallCount, 1)
+        XCTAssertEqual(logger.stateTransitionLogs.last?.toState, .snoozed)
+        XCTAssertEqual(logger.channelLogs.last?.userVisibleState, "snoozed")
+        XCTAssertEqual(logger.channelLogs.last?.snoozedAt, Date(timeIntervalSince1970: 24))
+    }
+
+    func testStopFromAwakeCandidateCompletesRunAndRecordsManualStop() {
+        let ringer = FakeWatchAlarmRinger()
+        let logger = FakeWatchAlarmRunLogger()
+        let flags = FeatureFlags(
+            autoSilenceEnabled: true,
+            reSleepDetectionEnabled: false,
+            gestureSnoozeEnabled: true,
+            heartRateBoostEnabled: true,
+            maxReAlarmCount: 2
+        )
+        let engine = WatchAlarmRunEngine(ringer: ringer, featureFlags: flags)
+        let runId = UUID()
+        engine.runtimeDidStart(RuntimeSessionLog(
+            runId: runId,
+            sessionType: "smartAlarmPreMonitoring",
+            scheduledAt: Date(timeIntervalSince1970: 0),
+            targetStartAt: Date(timeIntervalSince1970: 0),
+            actualStartAt: Date(timeIntervalSince1970: 1),
+            invalidatedAt: nil,
+            invalidationReason: nil,
+            startLatencySec: 1,
+            didStartBeforeAlarm: true,
+            didReachRingTime: false,
+            errorCode: nil,
+            errorMessage: nil
+        ), nextFireAt: Date(timeIntervalSince1970: 20), runLogger: logger)
+        engine.ringTimeReached(runLogger: logger, at: Date(timeIntervalSince1970: 20))
+        let (summary, freshness) = makeAwakeCandidateInputs(runId: runId)
+        _ = engine.evaluateAwake(
+            summary: summary,
+            freshness: freshness,
+            now: Date(timeIntervalSince1970: 23),
+            runLogger: logger
+        )
+
+        engine.stop(runLogger: logger, at: Date(timeIntervalSince1970: 24))
+
+        XCTAssertEqual(engine.state, .completed)
+        XCTAssertEqual(ringer.stopCallCount, 1)
+        XCTAssertEqual(logger.stateTransitionLogs.last?.toState, .completed)
+        XCTAssertEqual(logger.channelLogs.last?.userVisibleState, "stopped")
+        XCTAssertEqual(logger.outcomeLogs.last?.manualStop, true)
+    }
+
     func testAutoSilenceRejectsStaleMotionAndReturnsToOriginState() {
         let ringer = FakeWatchAlarmRinger()
         let logger = FakeWatchAlarmRunLogger()
@@ -366,7 +544,35 @@ final class WatchAlarmRunEngineTests: XCTestCase {
             errorCode: nil,
             errorMessage: nil
         ), nextFireAt: Date(timeIntervalSince1970: 20), runLogger: logger)
-        engine.autoSilenceConfirmed(at: Date(timeIntervalSince1970: 0))
+        engine.ringTimeReached(runLogger: logger, at: Date(timeIntervalSince1970: 20))
+        var awakeSummary = SensorSummary.fixture(
+            motionContinuitySec: 12,
+            postureDelta: 50,
+            gyroPeak: 3,
+            stepDelta: 1,
+            interactionCount: 1,
+            hrDeltaFromBaseline: nil
+        )
+        awakeSummary.runId = runId
+        var awakeFreshness = SensorFreshness.fixture(
+            motionLastSampleAgeSec: 1,
+            hrLastSampleAgeSec: nil,
+            baselineHRConfidence: .none,
+            watchWornConfidence: .medium
+        )
+        awakeFreshness.runId = runId
+        _ = engine.evaluateAwake(
+            summary: awakeSummary,
+            freshness: awakeFreshness,
+            now: Date(timeIntervalSince1970: 21),
+            runLogger: logger
+        )
+        _ = engine.evaluateAwake(
+            summary: awakeSummary,
+            freshness: awakeFreshness,
+            now: Date(timeIntervalSince1970: 35),
+            runLogger: logger
+        )
         var freshness = SensorFreshness.fixture(
             motionLastSampleAgeSec: 1,
             hrLastSampleAgeSec: nil,
@@ -394,8 +600,80 @@ final class WatchAlarmRunEngineTests: XCTestCase {
 
         XCTAssertEqual(result?.shouldReRing, true)
         XCTAssertEqual(engine.state, .reRinging)
-        XCTAssertEqual(ringer.startCallCount, 1)
+        XCTAssertEqual(ringer.startCallCount, 2)
         XCTAssertTrue(logger.stateTransitionLogs.contains { $0.toState == .reRinging && ($0.reason.contains("lowMotion")) })
         XCTAssertTrue(logger.channelLogs.contains { $0.userVisibleState == "re_ringing" && $0.firedAt == Date(timeIntervalSince1970: 180) })
     }
+
+    func testStopFromSilencedMonitoringCompletesRunAndRecordsManualStop() {
+        let ringer = FakeWatchAlarmRinger()
+        let logger = FakeWatchAlarmRunLogger()
+        let flags = FeatureFlags(
+            autoSilenceEnabled: true,
+            reSleepDetectionEnabled: true,
+            gestureSnoozeEnabled: true,
+            heartRateBoostEnabled: true,
+            maxReAlarmCount: 2
+        )
+        let engine = WatchAlarmRunEngine(ringer: ringer, featureFlags: flags)
+        let runId = UUID()
+        engine.runtimeDidStart(RuntimeSessionLog(
+            runId: runId,
+            sessionType: "smartAlarmPreMonitoring",
+            scheduledAt: Date(timeIntervalSince1970: 0),
+            targetStartAt: Date(timeIntervalSince1970: 0),
+            actualStartAt: Date(timeIntervalSince1970: 1),
+            invalidatedAt: nil,
+            invalidationReason: nil,
+            startLatencySec: 1,
+            didStartBeforeAlarm: true,
+            didReachRingTime: false,
+            errorCode: nil,
+            errorMessage: nil
+        ), nextFireAt: Date(timeIntervalSince1970: 20), runLogger: logger)
+        engine.ringTimeReached(runLogger: logger, at: Date(timeIntervalSince1970: 20))
+        let (summary, freshness) = makeAwakeCandidateInputs(runId: runId)
+        _ = engine.evaluateAwake(
+            summary: summary,
+            freshness: freshness,
+            now: Date(timeIntervalSince1970: 23),
+            runLogger: logger
+        )
+        _ = engine.evaluateAwake(
+            summary: summary,
+            freshness: freshness,
+            now: Date(timeIntervalSince1970: 35),
+            runLogger: logger
+        )
+
+        engine.stop(runLogger: logger, at: Date(timeIntervalSince1970: 40))
+
+        XCTAssertEqual(engine.state, .completed)
+        XCTAssertEqual(ringer.stopCallCount, 2)
+        XCTAssertEqual(logger.stateTransitionLogs.last?.toState, .completed)
+        XCTAssertEqual(logger.channelLogs.last?.userVisibleState, "stopped")
+        XCTAssertEqual(logger.outcomeLogs.last?.manualStop, true)
+    }
+
+    private func makeAwakeCandidateInputs(runId: UUID) -> (SensorSummary, SensorFreshness) {
+        var summary = SensorSummary.fixture(
+            motionContinuitySec: 12,
+            postureDelta: 50,
+            gyroPeak: 3,
+            stepDelta: 1,
+            interactionCount: 1,
+            hrDeltaFromBaseline: nil
+        )
+        summary.runId = runId
+
+        var freshness = SensorFreshness.fixture(
+            motionLastSampleAgeSec: 1,
+            hrLastSampleAgeSec: nil,
+            baselineHRConfidence: .none,
+            watchWornConfidence: .medium
+        )
+        freshness.runId = runId
+        return (summary, freshness)
+    }
+
 }

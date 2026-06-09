@@ -99,6 +99,15 @@ final class WatchAppModelTests: XCTestCase {
         XCTAssertEqual(model.currentState, .needsWatchArming)
         XCTAssertEqual(model.failureReason, "missing_alarm_config")
         XCTAssertEqual(runtimeScheduler.invalidateCallCount, 1)
+
+        let summaries = connectivity.outboundMessages.compactMap { message -> RunLogSummaryPayload? in
+            guard case let .runLogSummary(payload) = message else { return nil }
+            return payload
+        }
+        let summary = try! XCTUnwrap(summaries.last)
+        XCTAssertEqual(summary.finalState, .needsWatchArming)
+        XCTAssertNil(summary.outcome)
+        XCTAssertFalse(summary.fallbackUsed)
     }
 
     func testRuntimeInvalidationAfterArmDowngradesStateAndResendsStatusToPhone() {
@@ -330,11 +339,58 @@ final class WatchAppModelTests: XCTestCase {
         XCTAssertEqual(summary.eventCount, try logger.eventCount(runId: runId))
     }
 
+    func testConfigRemovalAfterRuntimeStartRecordsTransitionAndSummaryForSameRun() async {
+        let alarm = Alarm.fixture(smartEnabled: true)
+        let payload = AlarmConfigPayload(alarm: alarm, nextFireAt: Date.now.addingTimeInterval(3_600))
+        let connectivity = FakeWatchConnectivityClient(latestAlarmConfig: payload)
+        let runtimeScheduler = FakeRuntimeSessionScheduler(shouldSucceed: true)
+        let logger = FakeWatchAlarmRunLogger()
+        let model = WatchAppModel(
+            connectivity: connectivity,
+            runtimeScheduler: runtimeScheduler,
+            ringer: FakeWatchAlarmRinger(),
+            runLogger: logger,
+            preflightChecker: makePassingPreflight()
+        )
+
+        model.armCurrentAlarm()
+        let runId = try! XCTUnwrap(runtimeScheduler.lastRunID)
+        runtimeScheduler.emitStart(RuntimeSessionLog(
+            runId: runId,
+            sessionType: "fakeSmartAlarmPreMonitoring",
+            scheduledAt: Date(timeIntervalSince1970: 0),
+            targetStartAt: Date(timeIntervalSince1970: 0),
+            actualStartAt: Date(timeIntervalSince1970: 1),
+            invalidatedAt: nil,
+            invalidationReason: nil,
+            startLatencySec: 1,
+            didStartBeforeAlarm: true,
+            didReachRingTime: false,
+            errorCode: nil,
+            errorMessage: nil
+        ))
+        await flushMainActorWork()
+
+        connectivity.deliverCancellation(for: alarm.id)
+
+        XCTAssertEqual(logger.stateTransitionLogs.last?.runId, runId)
+        XCTAssertEqual(logger.stateTransitionLogs.last?.toState, .needsWatchArming)
+        let summaries = connectivity.outboundMessages.compactMap { message -> RunLogSummaryPayload? in
+            guard case let .runLogSummary(payload) = message else { return nil }
+            return payload
+        }
+        let summary = try! XCTUnwrap(summaries.last)
+        XCTAssertEqual(summary.runId, runId)
+        XCTAssertEqual(summary.finalState, .needsWatchArming)
+        XCTAssertEqual(summary.eventCount, try logger.eventCount(runId: runId))
+    }
+
     func testLowBatteryPreflightFailsClosedBeforeSchedulingRuntime() {
         let alarm = Alarm.fixture(smartEnabled: true)
         let payload = AlarmConfigPayload(alarm: alarm, nextFireAt: Date.now.addingTimeInterval(3_600))
         let connectivity = FakeWatchConnectivityClient(latestAlarmConfig: payload)
         let runtimeScheduler = FakeRuntimeSessionScheduler(shouldSucceed: true)
+        let logger = FakeWatchAlarmRunLogger()
         let preflight = FakeWatchPreflightChecker(result: WatchPreflightResult(
             canArmSmartMode: false,
             batteryLevel: 0.08,
@@ -345,6 +401,7 @@ final class WatchAppModelTests: XCTestCase {
             connectivity: connectivity,
             runtimeScheduler: runtimeScheduler,
             ringer: FakeWatchAlarmRinger(),
+            runLogger: logger,
             preflightChecker: preflight
         )
 
@@ -378,6 +435,11 @@ final class WatchAppModelTests: XCTestCase {
         XCTAssertEqual(summary.runId, sessionResult.runId)
         XCTAssertEqual(summary.finalState, .fallbackPhoneAlarm)
         XCTAssertTrue(summary.fallbackUsed)
+
+        let snapshot = try! XCTUnwrap(logger.stateTransitionLogs.last?.featureSnapshotId)
+        XCTAssertTrue(snapshot.contains("watch_battery_low"))
+        XCTAssertTrue(snapshot.contains("motionAvailable"))
+        XCTAssertTrue(snapshot.contains("batteryLevel"))
     }
 
     func testSummaryDrivesAutoSilenceWhenExperimentFlagEnabled() async {
@@ -430,6 +492,7 @@ final class WatchAppModelTests: XCTestCase {
             watchWornConfidence: .medium
         )
         freshness.runId = runId
+        freshness.timestamp = Date(timeIntervalSince1970: 22)
         sensorSampler.emitFreshness(freshness)
         var firstSummary = SensorSummary.fixture(
             motionContinuitySec: 12,
@@ -447,6 +510,8 @@ final class WatchAppModelTests: XCTestCase {
         XCTAssertEqual(model.currentState, .awakeCandidate)
         XCTAssertEqual(ringer.stopCallCount, 0)
 
+        freshness.timestamp = Date(timeIntervalSince1970: 34)
+        sensorSampler.emitFreshness(freshness)
         var secondSummary = SensorSummary.fixture(
             motionContinuitySec: 12,
             postureDelta: 50,
@@ -466,6 +531,52 @@ final class WatchAppModelTests: XCTestCase {
         XCTAssertTrue(logger.channelLogs.contains { $0.userVisibleState == "auto_silenced" })
         XCTAssertTrue(logger.freshnessLogs.contains { $0.runId == runId && $0.motionFresh })
         XCTAssertTrue(logger.summaryLogs.contains { $0.runId == runId && $0.windowEnd == Date(timeIntervalSince1970: 35) })
+    }
+
+    func testSnoozeFromAwakeCandidateSendsSnoozedRunSummary() async {
+        let (model, runtimeScheduler, connectivity, ringer, logger, sensorSampler) = makeAutoSilenceModel(reSleepDetectionEnabled: false)
+
+        let runId = try! await moveModelToAwakeCandidate(
+            model: model,
+            runtimeScheduler: runtimeScheduler,
+            sensorSampler: sensorSampler
+        )
+
+        model.snooze()
+
+        XCTAssertEqual(model.currentState, .snoozed)
+        XCTAssertEqual(ringer.snoozeCallCount, 1)
+        let summary = try! XCTUnwrap(connectivity.outboundMessages.compactMap { message -> RunLogSummaryPayload? in
+            guard case let .runLogSummary(payload) = message else { return nil }
+            return payload
+        }.last)
+        XCTAssertEqual(summary.runId, runId)
+        XCTAssertEqual(summary.finalState, .snoozed)
+        XCTAssertEqual(summary.outcome, .userSnoozed)
+        XCTAssertEqual(summary.eventCount, try logger.eventCount(runId: runId))
+    }
+
+    func testStopFromAwakeCandidateSendsCompletedRunSummary() async {
+        let (model, runtimeScheduler, connectivity, ringer, logger, sensorSampler) = makeAutoSilenceModel(reSleepDetectionEnabled: false)
+
+        let runId = try! await moveModelToAwakeCandidate(
+            model: model,
+            runtimeScheduler: runtimeScheduler,
+            sensorSampler: sensorSampler
+        )
+
+        model.stop()
+
+        XCTAssertEqual(model.currentState, .completed)
+        XCTAssertEqual(ringer.stopCallCount, 1)
+        let summary = try! XCTUnwrap(connectivity.outboundMessages.compactMap { message -> RunLogSummaryPayload? in
+            guard case let .runLogSummary(payload) = message else { return nil }
+            return payload
+        }.last)
+        XCTAssertEqual(summary.runId, runId)
+        XCTAssertEqual(summary.finalState, .completed)
+        XCTAssertEqual(summary.outcome, .userStopped)
+        XCTAssertEqual(summary.eventCount, try logger.eventCount(runId: runId))
     }
 
     func testSummaryDrivesReSleepDetectionWhenExperimentFlagEnabled() async {
@@ -518,6 +629,7 @@ final class WatchAppModelTests: XCTestCase {
             watchWornConfidence: .medium
         )
         freshness.runId = runId
+        freshness.timestamp = Date(timeIntervalSince1970: 22)
         sensorSampler.emitFreshness(freshness)
         var awakeSummary = SensorSummary.fixture(
             motionContinuitySec: 12,
@@ -530,6 +642,8 @@ final class WatchAppModelTests: XCTestCase {
         awakeSummary.runId = runId
         awakeSummary.windowEnd = Date(timeIntervalSince1970: 23)
         sensorSampler.emitSummary(awakeSummary)
+        freshness.timestamp = Date(timeIntervalSince1970: 34)
+        sensorSampler.emitFreshness(freshness)
         awakeSummary.windowEnd = Date(timeIntervalSince1970: 35)
         sensorSampler.emitSummary(awakeSummary)
         await flushMainActorWork()
@@ -546,6 +660,8 @@ final class WatchAppModelTests: XCTestCase {
         reSleepSummary.runId = runId
         reSleepSummary.stillnessDurationSec = 180
         reSleepSummary.windowEnd = Date(timeIntervalSince1970: 220)
+        freshness.timestamp = Date(timeIntervalSince1970: 219)
+        sensorSampler.emitFreshness(freshness)
         sensorSampler.emitSummary(reSleepSummary)
         await flushMainActorWork()
 
@@ -561,10 +677,241 @@ final class WatchAppModelTests: XCTestCase {
         })
     }
 
+    func testStopFromSilencedMonitoringSendsCompletedRunSummary() async {
+        let (model, runtimeScheduler, connectivity, ringer, logger, sensorSampler) = makeAutoSilenceModel(reSleepDetectionEnabled: true)
+
+        let runId = try! await moveModelToSilencedMonitoring(
+            model: model,
+            runtimeScheduler: runtimeScheduler,
+            sensorSampler: sensorSampler
+        )
+
+        model.stop()
+
+        XCTAssertEqual(model.currentState, .completed)
+        XCTAssertEqual(ringer.stopCallCount, 2)
+        let summary = try! XCTUnwrap(connectivity.outboundMessages.compactMap { message -> RunLogSummaryPayload? in
+            guard case let .runLogSummary(payload) = message else { return nil }
+            return payload
+        }.last)
+        XCTAssertEqual(summary.runId, runId)
+        XCTAssertEqual(summary.finalState, .completed)
+        XCTAssertEqual(summary.outcome, .userStopped)
+        XCTAssertEqual(summary.eventCount, try logger.eventCount(runId: runId))
+    }
+
+    func testSummaryIgnoresStaleFreshnessTimestampMismatch() async {
+        let alarm = Alarm.fixture(smartEnabled: true)
+        let payload = AlarmConfigPayload(alarm: alarm, nextFireAt: Date(timeIntervalSinceNow: 3_600))
+        let connectivity = FakeWatchConnectivityClient(latestAlarmConfig: payload)
+        let runtimeScheduler = FakeRuntimeSessionScheduler(shouldSucceed: true)
+        let logger = FakeWatchAlarmRunLogger()
+        let sensorSampler = FakeWatchSensorSampler()
+        let flags = FeatureFlags(
+            autoSilenceEnabled: true,
+            reSleepDetectionEnabled: false,
+            gestureSnoozeEnabled: true,
+            heartRateBoostEnabled: true,
+            maxReAlarmCount: 2
+        )
+        let model = WatchAppModel(
+            connectivity: connectivity,
+            runtimeScheduler: runtimeScheduler,
+            ringer: FakeWatchAlarmRinger(),
+            runLogger: logger,
+            sensorSampler: sensorSampler,
+            preflightChecker: makePassingPreflight(),
+            engineFactory: WatchAlarmRunEngineFactory(featureFlags: flags)
+        )
+
+        model.armCurrentAlarm()
+        let runId = try! XCTUnwrap(runtimeScheduler.lastRunID)
+        runtimeScheduler.emitStart(RuntimeSessionLog(
+            runId: runId,
+            sessionType: "fakeSmartAlarmPreMonitoring",
+            scheduledAt: Date(timeIntervalSince1970: 0),
+            targetStartAt: Date(timeIntervalSince1970: 0),
+            actualStartAt: Date(timeIntervalSince1970: 1),
+            invalidatedAt: nil,
+            invalidationReason: nil,
+            startLatencySec: 1,
+            didStartBeforeAlarm: true,
+            didReachRingTime: false,
+            errorCode: nil,
+            errorMessage: nil
+        ))
+        await flushMainActorWork()
+        model.simulateRinging()
+
+        var freshness = SensorFreshness.fixture(
+            motionLastSampleAgeSec: 1,
+            hrLastSampleAgeSec: nil,
+            baselineHRConfidence: .none,
+            watchWornConfidence: .medium
+        )
+        freshness.runId = runId
+        freshness.timestamp = Date(timeIntervalSince1970: 10)
+        sensorSampler.emitFreshness(freshness)
+
+        var summary = SensorSummary.fixture(
+            motionContinuitySec: 12,
+            postureDelta: 50,
+            gyroPeak: 3,
+            stepDelta: 1,
+            interactionCount: 1,
+            hrDeltaFromBaseline: nil
+        )
+        summary.runId = runId
+        summary.windowEnd = Date(timeIntervalSince1970: 40)
+        sensorSampler.emitSummary(summary)
+        await flushMainActorWork()
+
+        XCTAssertEqual(model.currentState, .ringing)
+        XCTAssertFalse(logger.stateTransitionLogs.contains { $0.toState == .awakeCandidate })
+    }
+
     private func flushMainActorWork() async {
         for _ in 0..<3 {
             await Task.yield()
         }
+    }
+
+    private func makeAutoSilenceModel(reSleepDetectionEnabled: Bool) -> (
+        model: WatchAppModel,
+        runtimeScheduler: FakeRuntimeSessionScheduler,
+        connectivity: FakeWatchConnectivityClient,
+        ringer: FakeWatchAlarmRinger,
+        logger: FakeWatchAlarmRunLogger,
+        sensorSampler: FakeWatchSensorSampler
+    ) {
+        let alarm = Alarm.fixture(smartEnabled: true)
+        let payload = AlarmConfigPayload(alarm: alarm, nextFireAt: Date(timeIntervalSinceNow: 3_600))
+        let connectivity = FakeWatchConnectivityClient(latestAlarmConfig: payload)
+        let runtimeScheduler = FakeRuntimeSessionScheduler(shouldSucceed: true)
+        let ringer = FakeWatchAlarmRinger()
+        let logger = FakeWatchAlarmRunLogger()
+        let sensorSampler = FakeWatchSensorSampler()
+        let flags = FeatureFlags(
+            autoSilenceEnabled: true,
+            reSleepDetectionEnabled: reSleepDetectionEnabled,
+            gestureSnoozeEnabled: true,
+            heartRateBoostEnabled: true,
+            maxReAlarmCount: 2
+        )
+        let model = WatchAppModel(
+            connectivity: connectivity,
+            runtimeScheduler: runtimeScheduler,
+            ringer: ringer,
+            runLogger: logger,
+            sensorSampler: sensorSampler,
+            preflightChecker: makePassingPreflight(),
+            engineFactory: WatchAlarmRunEngineFactory(featureFlags: flags)
+        )
+        return (model, runtimeScheduler, connectivity, ringer, logger, sensorSampler)
+    }
+
+    private func moveModelToAwakeCandidate(
+        model: WatchAppModel,
+        runtimeScheduler: FakeRuntimeSessionScheduler,
+        sensorSampler: FakeWatchSensorSampler
+    ) async throws -> UUID {
+        model.armCurrentAlarm()
+        let runId = try XCTUnwrap(runtimeScheduler.lastRunID)
+        runtimeScheduler.emitStart(RuntimeSessionLog(
+            runId: runId,
+            sessionType: "fakeSmartAlarmPreMonitoring",
+            scheduledAt: Date(timeIntervalSince1970: 0),
+            targetStartAt: Date(timeIntervalSince1970: 0),
+            actualStartAt: Date(timeIntervalSince1970: 1),
+            invalidatedAt: nil,
+            invalidationReason: nil,
+            startLatencySec: 1,
+            didStartBeforeAlarm: true,
+            didReachRingTime: false,
+            errorCode: nil,
+            errorMessage: nil
+        ))
+        await flushMainActorWork()
+        model.simulateRinging()
+
+        emitAwakeCandidate(runId: runId, sensorSampler: sensorSampler)
+        await flushMainActorWork()
+        XCTAssertEqual(model.currentState, .awakeCandidate)
+        return runId
+    }
+
+    private func moveModelToSilencedMonitoring(
+        model: WatchAppModel,
+        runtimeScheduler: FakeRuntimeSessionScheduler,
+        sensorSampler: FakeWatchSensorSampler
+    ) async throws -> UUID {
+        model.armCurrentAlarm()
+        let runId = try XCTUnwrap(runtimeScheduler.lastRunID)
+        runtimeScheduler.emitStart(RuntimeSessionLog(
+            runId: runId,
+            sessionType: "fakeSmartAlarmPreMonitoring",
+            scheduledAt: Date(timeIntervalSince1970: 0),
+            targetStartAt: Date(timeIntervalSince1970: 0),
+            actualStartAt: Date(timeIntervalSince1970: 1),
+            invalidatedAt: nil,
+            invalidationReason: nil,
+            startLatencySec: 1,
+            didStartBeforeAlarm: true,
+            didReachRingTime: false,
+            errorCode: nil,
+            errorMessage: nil
+        ))
+        await flushMainActorWork()
+        model.simulateRinging()
+        emitAwakeCandidate(runId: runId, sensorSampler: sensorSampler)
+        await flushMainActorWork()
+        var freshness = SensorFreshness.fixture(
+            motionLastSampleAgeSec: 1,
+            hrLastSampleAgeSec: nil,
+            baselineHRConfidence: .none,
+            watchWornConfidence: .medium
+        )
+        freshness.runId = runId
+        freshness.timestamp = Date(timeIntervalSince1970: 34)
+        sensorSampler.emitFreshness(freshness)
+        var summary = SensorSummary.fixture(
+            motionContinuitySec: 12,
+            postureDelta: 50,
+            gyroPeak: 3,
+            stepDelta: 1,
+            interactionCount: 1,
+            hrDeltaFromBaseline: nil
+        )
+        summary.runId = runId
+        summary.windowEnd = Date(timeIntervalSince1970: 35)
+        sensorSampler.emitSummary(summary)
+        await flushMainActorWork()
+        XCTAssertEqual(model.currentState, .silencedMonitoring)
+        return runId
+    }
+
+    private func emitAwakeCandidate(runId: UUID, sensorSampler: FakeWatchSensorSampler) {
+        var freshness = SensorFreshness.fixture(
+            motionLastSampleAgeSec: 1,
+            hrLastSampleAgeSec: nil,
+            baselineHRConfidence: .none,
+            watchWornConfidence: .medium
+        )
+        freshness.runId = runId
+        freshness.timestamp = Date(timeIntervalSince1970: 22)
+        sensorSampler.emitFreshness(freshness)
+
+        var summary = SensorSummary.fixture(
+            motionContinuitySec: 12,
+            postureDelta: 50,
+            gyroPeak: 3,
+            stepDelta: 1,
+            interactionCount: 1,
+            hrDeltaFromBaseline: nil
+        )
+        summary.runId = runId
+        summary.windowEnd = Date(timeIntervalSince1970: 23)
+        sensorSampler.emitSummary(summary)
     }
 
     private func makePassingPreflight() -> FakeWatchPreflightChecker {
