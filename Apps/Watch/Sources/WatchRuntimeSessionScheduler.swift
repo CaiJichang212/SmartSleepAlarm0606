@@ -10,58 +10,6 @@ protocol RuntimeSessionScheduling: AnyObject {
     func invalidate()
 }
 
-final class FakeRuntimeSessionScheduler: RuntimeSessionScheduling {
-    var shouldSucceed: Bool
-    var latestLog: RuntimeSessionLog? {
-        didSet {
-            if let latestLog {
-                onLogUpdated?(latestLog)
-            }
-        }
-    }
-    var onLogUpdated: ((RuntimeSessionLog) -> Void)?
-    var onRuntimeStarted: ((RuntimeSessionLog) -> Void)?
-    private(set) var invalidateCallCount = 0
-    private(set) var lastRunID: UUID?
-
-    init(shouldSucceed: Bool) {
-        self.shouldSucceed = shouldSucceed
-    }
-
-    func schedule(for payload: AlarmConfigPayload, runId: UUID) -> RuntimeSessionLog {
-        lastRunID = runId
-        let log = RuntimeSessionLog(
-            runId: runId,
-            sessionType: "fakeSmartAlarmPreMonitoring",
-            scheduledAt: Date(),
-            targetStartAt: payload.nextFireAt.addingTimeInterval(-30 * 60),
-            actualStartAt: nil,
-            invalidatedAt: nil,
-            invalidationReason: nil,
-            startLatencySec: nil,
-            didStartBeforeAlarm: false,
-            didReachRingTime: false,
-            errorCode: shouldSucceed ? nil : "fake_runtime_schedule_failed",
-            errorMessage: shouldSucceed ? nil : "Fake runtime scheduler was configured to fail."
-        )
-        latestLog = log
-        return log
-    }
-
-    func invalidate() {
-        invalidateCallCount += 1
-    }
-
-    func emitInvalidation(_ log: RuntimeSessionLog) {
-        latestLog = log
-    }
-
-    func emitStart(_ log: RuntimeSessionLog) {
-        latestLog = log
-        onRuntimeStarted?(log)
-    }
-}
-
 final class WatchRuntimeSessionScheduler: NSObject, ObservableObject, RuntimeSessionScheduling {
     @Published private(set) var latestLog: RuntimeSessionLog? {
         didSet {
