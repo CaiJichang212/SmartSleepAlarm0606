@@ -12,6 +12,10 @@
   - 4 份计划文档已提交
   - 本清单文档已提交
   - 不包含 `Apps/iOS`、`Apps/Watch`、`Packages/SmartSleepCore` 产品代码改动
+- 执行结果：
+  - 状态：已完成
+  - 提交：`b3cbca2` `docs: add v0.2 serial execution baseline`
+  - 验证：`git status --short`
 
 ## 分支 2: `codex/smartsleep-v02-watch-ios-connectivity-run-summary`
 
@@ -29,6 +33,16 @@
   - iOS 卡片状态不再用 arming 状态覆盖 runtime failure
   - `WatchAlarmRunLogging` 具备 `recordSummary(_:)` 与 `eventCount(runId:)`
   - Watch 在 stop/snooze/runtime invalidation 等终态路径发送 run summary
+- 执行结果：
+  - 状态：已完成
+  - 提交：`edb30f6` `feat: consume watch session and run summaries`
+  - 实际验证：
+    - `CLANG_MODULE_CACHE_PATH=/private/tmp/smartsleep-clang-cache-connectivity swift test --disable-sandbox --package-path Packages/SmartSleepCore`
+    - `SmartSleepAlarm` scheme tests 通过
+    - `SmartSleepWatch` scheme tests 通过
+  - 真机待补：
+    - WatchConnectivity 后台送达时序
+    - iPhone 在真实配对设备上的 session / summary 消费一致性
 
 ## 分支 3: `codex/smartsleep-v02-watch-sensor-preflight`
 
@@ -45,6 +59,17 @@
   - preflight failure 不调 runtime scheduler，但会记录日志并发送 session result / run summary
   - summary 聚合结果能写入 logger 并被后续 run summary 使用
   - HealthKit denied 只影响 HR boost，不阻断 motion-only Smart Mode
+- 执行结果：
+  - 状态：已完成
+  - 提交：`2b94526` `feat: add watch preflight and sensor summaries`
+  - 实际验证：
+    - `xcodegen generate`
+    - `CLANG_MODULE_CACHE_PATH=/private/tmp/smartsleep-clang-cache-preflight swift test --disable-sandbox --package-path Packages/SmartSleepCore`
+    - `SmartSleepWatch` scheme tests 通过
+  - 真机待补：
+    - HealthKit 授权与样本质量
+    - `WKExtendedRuntimeSession` 真实设备行为
+    - Motion summary 噪声分布
 
 ## 分支 4: `codex/smartsleep-v02-experimental-auto-silence-resleep`
 
@@ -62,8 +87,21 @@
   - 再睡重响记录 risk score / reason，并保留同一 runId 的 freshness / summary 回放证据
   - `FeatureFlags.v02Default.autoSilenceEnabled == false`
   - `FeatureFlags.v02Default.reSleepDetectionEnabled == false`
+- 执行结果：
+  - 状态：已完成
+  - 提交：`54751c7` `feat: add experimental auto silence and re-sleep flow`
+  - 实际验证：
+    - `CLANG_MODULE_CACHE_PATH=/private/tmp/smartsleep-clang-cache-experimental swift test --disable-sandbox --package-path Packages/SmartSleepCore`
+    - `SmartSleepWatch` scheme tests 通过（29 passed, 0 failed）
+  - 真机待补：
+    - 自动静音误判
+    - 再睡重响阈值与最大重响次数
+    - 真实佩戴动作噪声下的 candidate/re-ring 稳定性
 
 ## 收口: `codex/smartsleep-v02-audit-next-development`
 
 - 汇总每个分支的完成提交、验证命令、真机未覆盖项、剩余风险。
 - 只更新文档，不补产品代码。
+- 收口结果：
+  - 当前 audit 分支只包含计划与验收文档更新。
+  - 产品代码实现分别保留在对应实现分支，不回灌到 audit 分支。

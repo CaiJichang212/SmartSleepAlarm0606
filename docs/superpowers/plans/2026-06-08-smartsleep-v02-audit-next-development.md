@@ -41,6 +41,29 @@
 - 已实现：核心模型、状态机、motion-first awake scoring、再睡风险评分、手势贪睡检测、feature flags、JSONL 日志、iOS CRUD/本地通知兜底/日志导出/反馈入口、Watch 启用确认/runtime session 调度/CoreMotion freshness/手动停止与贪睡。
 - 未实现：iOS 消费 Watch session/run summary、真实 AlarmKit、Watch arming preflight、CoreMotion summary 聚合、HealthKit freshness adapter、feature-flagged 自动静音真实链路、feature-flagged 再睡检测真实链路、真机 P0 gate。
 
+## 串行执行收口状态
+
+- `codex/smartsleep-v02-audit-next-development`
+  - 提交：`b3cbca2` `docs: add v0.2 serial execution baseline`
+  - 结果：已完成。固定 4 份计划文档，并新增串行执行清单。
+- `codex/smartsleep-v02-watch-ios-connectivity-run-summary`
+  - 提交：`edb30f6` `feat: consume watch session and run summaries`
+  - 结果：已完成。iOS 已消费 `SessionResultPayload` / `RunLogSummaryPayload`，Watch logger 已提供 `recordSummary(_:)` 与 `eventCount(runId:)`，run summary 发送链路已接通。
+- `codex/smartsleep-v02-watch-sensor-preflight`
+  - 提交：`2b94526` `feat: add watch preflight and sensor summaries`
+  - 结果：已完成。Watch preflight、CoreMotion summary 聚合、HealthKit freshness mapper/adapter 已落地，preflight failure 会保守降级并补齐日志与 session/run summary。
+- `codex/smartsleep-v02-experimental-auto-silence-resleep`
+  - 提交：`54751c7` `feat: add experimental auto silence and re-sleep flow`
+  - 结果：已完成。自动静音两阶段状态机、再睡检测重响、风险与 outcome/channel 日志、summary/freshness 驱动链路均已接通，默认仍受 feature flag 关闭保护。
+
+## 剩余真机验证与风险
+
+- WatchConnectivity 真机后台可达性、iPhone 消费 session result / run summary 的时序可靠性，仍需配对设备验证。
+- `WKExtendedRuntimeSession` 真实启动时序、失效回调、闹钟前窗口调度精度，Simulator 不能替代真机。
+- CoreMotion summary 在真实佩戴场景下的噪声分布、静止误判、轻微活动误判，仍需 dogfood。
+- HealthKit 授权弹窗、样本延迟、拒绝授权后的体验与 freshness 质量，只做了保守 adapter，仍需设备验证。
+- 自动静音与再睡检测虽然已通过 watch tests，但误静音、误重响阈值、最大重响次数、动作噪声容忍度仍属于 P0 experiment，需要命名内部 run 和 JSONL 回放验证后再考虑放开。
+
 ## 全局验证前置
 
 每份计划执行前先确认工程状态：
