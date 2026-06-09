@@ -21,6 +21,8 @@ struct WatchAlarmRunEngineFactory {
 
 @MainActor
 final class WatchAppModel: ObservableObject {
+    private static let maxFreshnessLagSec: TimeInterval = 5
+
     @Published var currentState: SmartAlarmState = .needsWatchArming
     @Published var sessionScheduled = false
     @Published var lastConfig: AlarmConfigPayload?
@@ -38,6 +40,7 @@ final class WatchAppModel: ObservableObject {
     private var activeAlarmID: UUID?
     private var activeRunID: UUID?
     private var latestFreshness: SensorFreshness?
+    private var ignoredRuntimeUpdateRunIDs: Set<UUID> = []
 
     init(
         connectivity: WatchConnectivityClient = WatchConnectivityService(),
@@ -106,6 +109,7 @@ final class WatchAppModel: ObservableObject {
                 try? self.runLogger.recordSummary(summary)
                 guard let freshness = self.latestFreshness,
                       freshness.runId == summary.runId,
+                      self.isFreshnessUsableForSummary(freshness, summary: summary),
                       let runEngine = self.runEngine else { return }
                 if [.ringing, .reRinging, .awakeCandidate].contains(self.currentState) {
                     _ = runEngine.evaluateAwake(
@@ -161,6 +165,7 @@ final class WatchAppModel: ObservableObject {
             transitionState(
                 to: .fallbackPhoneAlarm,
                 reason: failureReason ?? "watch_preflight_failed",
+                featureSnapshotId: preflightSnapshot(for: preflight, nextFireAt: config.nextFireAt),
                 errorCode: failureReason
             )
             let status = WatchArmingStatus(
@@ -262,20 +267,27 @@ final class WatchAppModel: ObservableObject {
             return
         }
 
-        activeAlarmID = nil
-        activeRunID = nil
+        if let activeRunID {
+            ignoredRuntimeUpdateRunIDs.insert(activeRunID)
+        }
         ringTask?.cancel()
         ringTask = nil
-        runEngine = nil
         sensorSampler.stop()
         runtimeScheduler.invalidate()
         sessionScheduled = false
         transitionState(to: .needsWatchArming, reason: "alarm_config_removed")
         sendRunSummary(outcome: nil, fallbackUsed: false)
         failureReason = "missing_alarm_config"
+        activeAlarmID = nil
+        activeRunID = nil
+        latestFreshness = nil
+        runEngine = nil
     }
 
     private func handleRuntimeLogUpdate(_ log: RuntimeSessionLog) {
+        if ignoredRuntimeUpdateRunIDs.remove(log.runId) != nil {
+            return
+        }
         try? runLogger.recordRuntimeSession(log)
         guard let activeAlarmID, let activeRunID, activeRunID == log.runId else { return }
         let isRuntimeInvalidation = log.invalidatedAt != nil
@@ -330,6 +342,7 @@ final class WatchAppModel: ObservableObject {
         to newState: SmartAlarmState,
         reason: String,
         at date: Date = Date(),
+        featureSnapshotId: String? = nil,
         errorCode: String? = nil
     ) {
         let previousState = currentState
@@ -342,8 +355,25 @@ final class WatchAppModel: ObservableObject {
             timestamp: date,
             reason: reason,
             confidence: nil,
-            featureSnapshotId: nil,
+            featureSnapshotId: featureSnapshotId,
             errorCode: errorCode
         ))
+    }
+
+    private func isFreshnessUsableForSummary(_ freshness: SensorFreshness, summary: SensorSummary) -> Bool {
+        guard freshness.timestamp <= summary.windowEnd else { return false }
+        return summary.windowEnd.timeIntervalSince(freshness.timestamp) <= Self.maxFreshnessLagSec
+    }
+
+    private func preflightSnapshot(for result: WatchPreflightResult, nextFireAt: Date, checkedAt: Date = Date()) -> String {
+        let batteryText = result.batteryLevel.map { String(format: "%.2f", $0) } ?? "nil"
+        return [
+            "preflightFailure",
+            "reason=\(result.failureReason ?? "watch_preflight_failed")",
+            "batteryLevel=\(batteryText)",
+            "motionAvailable=\(result.motionAvailable)",
+            "nextFireAt=\(nextFireAt.timeIntervalSince1970)",
+            "checkedAt=\(checkedAt.timeIntervalSince1970)"
+        ].joined(separator: ";")
     }
 }
