@@ -75,6 +75,12 @@ final class WatchAppModel: ObservableObject {
                 }
             }
         }
+        self.sensorSampler.onSummary = { [weak self] summary in
+            Task { @MainActor in
+                guard let self else { return }
+                try? self.runLogger.recordSummary(summary)
+            }
+        }
         self.connectivity.onConfigChanged = { [weak self] config in
             self?.handleConfigChange(config)
         }
@@ -137,8 +143,13 @@ final class WatchAppModel: ObservableObject {
     }
 
     func simulateRinging() {
-        currentState = .ringing
-        ringer.startRinging()
+        if let runEngine {
+            runEngine.ringTimeReached(runLogger: runLogger)
+            currentState = runEngine.state
+        } else {
+            currentState = .ringing
+            ringer.startRinging()
+        }
     }
 
     func snooze() {
@@ -148,6 +159,7 @@ final class WatchAppModel: ObservableObject {
         if let runEngine {
             runEngine.snooze(runLogger: runLogger)
             currentState = runEngine.state
+            sendRunSummary(outcome: .userSnoozed)
         } else {
             transitionState(to: .snoozed, reason: "user_snoozed")
             ringer.snooze()
@@ -161,6 +173,7 @@ final class WatchAppModel: ObservableObject {
         if let runEngine {
             runEngine.stop(runLogger: runLogger)
             currentState = runEngine.state
+            sendRunSummary(outcome: .userStopped)
         } else {
             transitionState(to: .completed, reason: "user_stopped")
             ringer.stop()
@@ -184,13 +197,16 @@ final class WatchAppModel: ObservableObject {
         runtimeScheduler.invalidate()
         sessionScheduled = false
         transitionState(to: .needsWatchArming, reason: "alarm_config_removed")
+        sendRunSummary(outcome: nil, fallbackUsed: false)
         failureReason = "missing_alarm_config"
     }
 
     private func handleRuntimeLogUpdate(_ log: RuntimeSessionLog) {
         try? runLogger.recordRuntimeSession(log)
         guard let activeAlarmID, let activeRunID, activeRunID == log.runId else { return }
-        guard log.errorCode != nil || log.invalidatedAt != nil else { return }
+        let isRuntimeInvalidation = log.invalidatedAt != nil
+        let isPostStartError = log.errorCode != nil && log.actualStartAt != nil
+        guard isRuntimeInvalidation || isPostStartError else { return }
 
         sensorSampler.stop()
         sessionScheduled = false
@@ -220,6 +236,19 @@ final class WatchAppModel: ObservableObject {
             state: currentState,
             scheduledAt: log.scheduledAt,
             failureReason: failureReason
+        ))
+        sendRunSummary(outcome: nil, fallbackUsed: true)
+    }
+
+    private func sendRunSummary(outcome: OutcomeKind?, fallbackUsed: Bool = false) {
+        guard let activeRunID else { return }
+        let count = (try? runLogger.eventCount(runId: activeRunID)) ?? 0
+        connectivity.sendRunLogSummary(RunLogSummaryPayload(
+            runId: activeRunID,
+            finalState: currentState,
+            outcome: outcome,
+            eventCount: count,
+            fallbackUsed: fallbackUsed
         ))
     }
 

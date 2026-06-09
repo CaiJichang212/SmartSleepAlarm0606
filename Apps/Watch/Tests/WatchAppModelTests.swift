@@ -53,7 +53,7 @@ final class WatchAppModelTests: XCTestCase {
         XCTAssertEqual(model.currentState, .fallbackPhoneAlarm)
         XCTAssertFalse(model.sessionScheduled)
         XCTAssertEqual(model.failureReason, "runtime_session_not_scheduled")
-        XCTAssertEqual(connectivity.outboundMessages.count, 4)
+        XCTAssertEqual(connectivity.outboundMessages.count, 2)
 
         let armingFailures = connectivity.outboundMessages.compactMap { message -> ArmingResultPayload? in
             guard case let .armingResult(payload) = message else { return nil }
@@ -130,7 +130,7 @@ final class WatchAppModelTests: XCTestCase {
         XCTAssertFalse(model.sessionScheduled)
         XCTAssertEqual(model.currentState, .fallbackPhoneAlarm)
         XCTAssertEqual(model.failureReason, "runtime_session_invalidated")
-        XCTAssertEqual(connectivity.outboundMessages.count, 4)
+        XCTAssertEqual(connectivity.outboundMessages.count, 5)
     }
 
     func testRuntimeStartAndMotionStaleAreRecordedAsStateTransitions() async {
@@ -226,6 +226,91 @@ final class WatchAppModelTests: XCTestCase {
 
         XCTAssertEqual(logger.stateTransitionLogs.last?.toState, .fallbackPhoneAlarm)
         XCTAssertEqual(logger.stateTransitionLogs.last?.errorCode, "runtime_session_invalidated")
+    }
+
+    func testStopAfterRuntimeRunSendsRunLogSummaryWithLoggerEventCount() {
+        let alarm = Alarm.fixture(smartEnabled: true)
+        let payload = AlarmConfigPayload(alarm: alarm, nextFireAt: Date(timeIntervalSince1970: 3_600))
+        let connectivity = FakeWatchConnectivityClient(latestAlarmConfig: payload)
+        let runtimeScheduler = FakeRuntimeSessionScheduler(shouldSucceed: true)
+        let logger = FakeWatchAlarmRunLogger()
+        let model = WatchAppModel(
+            connectivity: connectivity,
+            runtimeScheduler: runtimeScheduler,
+            ringer: FakeWatchAlarmRinger(),
+            runLogger: logger
+        )
+
+        model.armCurrentAlarm()
+        let runId = try! XCTUnwrap(runtimeScheduler.lastRunID)
+        runtimeScheduler.emitStart(RuntimeSessionLog(
+            runId: runId,
+            sessionType: "fakeSmartAlarmPreMonitoring",
+            scheduledAt: Date(timeIntervalSince1970: 0),
+            targetStartAt: Date(timeIntervalSince1970: 0),
+            actualStartAt: Date(timeIntervalSince1970: 1),
+            invalidatedAt: nil,
+            invalidationReason: nil,
+            startLatencySec: 1,
+            didStartBeforeAlarm: true,
+            didReachRingTime: false,
+            errorCode: nil,
+            errorMessage: nil
+        ))
+        model.simulateRinging()
+        model.stop()
+
+        let summaries = connectivity.outboundMessages.compactMap { message -> RunLogSummaryPayload? in
+            guard case let .runLogSummary(payload) = message else { return nil }
+            return payload
+        }
+        let summary = try! XCTUnwrap(summaries.last)
+        XCTAssertEqual(summary.runId, runId)
+        XCTAssertEqual(summary.finalState, .completed)
+        XCTAssertEqual(summary.outcome, .userStopped)
+        XCTAssertEqual(summary.eventCount, try logger.eventCount(runId: runId))
+    }
+
+    func testRuntimeInvalidationSendsRunLogSummaryWithFallbackUsed() {
+        let alarm = Alarm.fixture(smartEnabled: true)
+        let payload = AlarmConfigPayload(alarm: alarm, nextFireAt: Date(timeIntervalSince1970: 3_600))
+        let connectivity = FakeWatchConnectivityClient(latestAlarmConfig: payload)
+        let runtimeScheduler = FakeRuntimeSessionScheduler(shouldSucceed: true)
+        let logger = FakeWatchAlarmRunLogger()
+        let model = WatchAppModel(
+            connectivity: connectivity,
+            runtimeScheduler: runtimeScheduler,
+            ringer: FakeWatchAlarmRinger(),
+            runLogger: logger
+        )
+
+        model.armCurrentAlarm()
+        let runId = try! XCTUnwrap(runtimeScheduler.lastRunID)
+        runtimeScheduler.emitInvalidation(RuntimeSessionLog(
+            runId: runId,
+            sessionType: "fakeSmartAlarmPreMonitoring",
+            scheduledAt: Date(timeIntervalSince1970: 0),
+            targetStartAt: Date(timeIntervalSince1970: 0),
+            actualStartAt: Date(timeIntervalSince1970: 10),
+            invalidatedAt: Date(timeIntervalSince1970: 20),
+            invalidationReason: "expired",
+            startLatencySec: 10,
+            didStartBeforeAlarm: true,
+            didReachRingTime: false,
+            errorCode: "runtime_session_invalidated",
+            errorMessage: "expired"
+        ))
+
+        let summaries = connectivity.outboundMessages.compactMap { message -> RunLogSummaryPayload? in
+            guard case let .runLogSummary(payload) = message else { return nil }
+            return payload
+        }
+        let summary = try! XCTUnwrap(summaries.last)
+        XCTAssertEqual(summary.runId, runId)
+        XCTAssertEqual(summary.finalState, .fallbackPhoneAlarm)
+        XCTAssertNil(summary.outcome)
+        XCTAssertEqual(summary.fallbackUsed, true)
+        XCTAssertEqual(summary.eventCount, try logger.eventCount(runId: runId))
     }
 
     private func flushMainActorWork() async {

@@ -48,6 +48,12 @@ private struct AlarmDashboardView: View {
                 }
 
                 Section("内部测试预览") {
+                    if let latestRunSummary = model.latestRunSummary {
+                        LabeledContent("最新 Run", value: latestRunSummary.finalState.rawValue)
+                        LabeledContent("最新 Outcome", value: latestRunSummary.outcome?.rawValue ?? "none")
+                        LabeledContent("最新 Event 数", value: "\(latestRunSummary.eventCount)")
+                    }
+
                     Button {
                         model.exportPreview()
                     } label: {
@@ -275,10 +281,15 @@ struct AlarmCardState: Identifiable, Equatable {
     var id: UUID
     var alarm: Alarm
     var armingStatus: WatchArmingStatus?
+    var sessionResult: SessionResultPayload?
     var nextFireAt: Date
 
     var smartStatus: SmartModeStatus {
-        SmartModeResolver.status(for: alarm, arming: armingStatus)
+        if let sessionResult,
+           sessionResult.failureReason != nil || sessionResult.state == .fallbackPhoneAlarm {
+            return .fallbackOnly
+        }
+        return SmartModeResolver.status(for: alarm, arming: armingStatus)
     }
 
     var timeLabel: String {
@@ -314,6 +325,7 @@ struct AlarmCardState: Identifiable, Equatable {
     static func from(
         alarm: Alarm,
         armingStatus: WatchArmingStatus? = nil,
+        sessionResult: SessionResultPayload? = nil,
         calendar: Calendar = .current,
         now: Date = Date()
     ) -> AlarmCardState {
@@ -322,7 +334,13 @@ struct AlarmCardState: Identifiable, Equatable {
         let base = calendar.startOfDay(for: now)
         let candidate = calendar.date(bySettingHour: hour, minute: minute, second: 0, of: base) ?? now
         let nextFireAt = candidate > now ? candidate : calendar.date(byAdding: .day, value: 1, to: candidate) ?? candidate
-        return AlarmCardState(id: alarm.id, alarm: alarm, armingStatus: armingStatus, nextFireAt: nextFireAt)
+        return AlarmCardState(
+            id: alarm.id,
+            alarm: alarm,
+            armingStatus: armingStatus,
+            sessionResult: sessionResult,
+            nextFireAt: nextFireAt
+        )
     }
 
     static func make(
@@ -347,7 +365,7 @@ struct AlarmCardState: Identifiable, Equatable {
             maxReAlarmCount: 2,
             backupChannelPreferred: .iOSLocalNotification
         )
-        return AlarmCardState(id: id, alarm: alarm, armingStatus: nil, nextFireAt: nextFireAt)
+        return AlarmCardState(id: id, alarm: alarm, armingStatus: nil, sessionResult: nil, nextFireAt: nextFireAt)
     }
 
     static func make(nextFireAt: Date, label: String, smartEnabled: Bool, snoozeMinutes: Int) -> AlarmCardState {

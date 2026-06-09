@@ -48,6 +48,7 @@ final class BackupAlarmSchedulerTests: XCTestCase {
         XCTAssertEqual(log.channel, .iOSAlarmKit)
         XCTAssertEqual(local.scheduledAlarmIDs, [])
         XCTAssertEqual(alarmKit.scheduledAlarmIDs, [alarm.id])
+        XCTAssertEqual(alarmKit.scheduledChannels, [.iOSAlarmKit])
     }
 
     func testRepeatingAlarmBuildsOneRequestPerWeekday() throws {
