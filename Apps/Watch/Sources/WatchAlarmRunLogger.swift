@@ -83,32 +83,3 @@ struct WatchAlarmRunLogger: WatchAlarmRunLogging {
         return try! WatchAlarmRunLogger(logsDirectory: directory)
     }
 }
-
-final class FakeWatchAlarmRunLogger: WatchAlarmRunLogging {
-    private(set) var stateTransitionLogs: [StateTransitionLog] = []
-    private(set) var runtimeLogs: [RuntimeSessionLog] = []
-    private(set) var channelLogs: [AlarmChannelLog] = []
-    private(set) var freshnessLogs: [SensorFreshness] = []
-    private(set) var summaryLogs: [SensorSummary] = []
-    private(set) var gestureLogs: [GestureEvent] = []
-    private(set) var outcomeLogs: [OutcomeLabel] = []
-
-    func recordStateTransition(_ log: StateTransitionLog) throws { stateTransitionLogs.append(log) }
-    func recordRuntimeSession(_ log: RuntimeSessionLog) throws { runtimeLogs.append(log) }
-    func recordChannel(_ log: AlarmChannelLog) throws { channelLogs.append(log) }
-    func recordFreshness(_ freshness: SensorFreshness) throws { freshnessLogs.append(freshness) }
-    func recordSummary(_ summary: SensorSummary) throws { summaryLogs.append(summary) }
-    func recordGesture(_ gesture: GestureEvent) throws { gestureLogs.append(gesture) }
-    func recordOutcome(_ outcome: OutcomeLabel) throws { outcomeLogs.append(outcome) }
-    func eventCount(runId: UUID) throws -> Int {
-        let stateCount = stateTransitionLogs.filter { $0.runId == runId }.count
-        let runtimeCount = runtimeLogs.filter { $0.runId == runId }.count
-        let channelCount = channelLogs.filter { $0.runId == runId }.count
-        let freshnessCount = freshnessLogs.filter { $0.runId == runId }.count
-        let summaryCount = summaryLogs.filter { $0.runId == runId }.count
-        let gestureCount = gestureLogs.filter { $0.runId == runId }.count
-        let outcomeCount = outcomeLogs.filter { $0.runId == runId }.count
-        return stateCount + runtimeCount + channelCount + freshnessCount + summaryCount + gestureCount + outcomeCount
-    }
-    func export(runId: UUID) throws -> String { "" }
-}
