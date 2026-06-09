@@ -14,6 +14,10 @@
 | Connectivity | Watch sends session result and run summary | iPhone card keeps arming status, debug area only shows latest summary | Simulator plus paired real devices | Not tested |
 | Runtime | Watch schedules runtime session | Runtime log records scheduled target start | Requires paired real devices | Not tested |
 | Preflight | Watch battery low or motion unavailable before arming | Watch fails closed, iPhone keeps fallback visible, session summary is exported | Partial via simulator and fakes | Pending |
+| Experimental auto silence | HR-only spike | Candidate is rejected and ringing continues | Covered by watch tests | Pending |
+| Experimental auto silence | Motion stale during candidate | Candidate is rejected and ringing continues | Covered by watch tests | Pending |
+| Experimental auto silence | Confirmation window met | State reaches `SILENCED_MONITORING` and logs `auto_silenced` | Covered by watch tests | Pending |
+| Experimental re-sleep | False re-alarm / max re-alarm count | Risk log present and re-ring count stays bounded | Covered by watch tests plus real-device follow-up | Pending |
 | Fallback | iPhone fallback notification scheduled | `AlarmChannelLog` records `iOSLocalNotification` | Simulator plus JSONL inspection | Not tested |
 | Notification | iPhone fallback fires under Silent Mode and Sleep Focus | User notices fallback alarm | Requires paired real devices | Not tested |
 | Ringer | Watch haptic feedback starts, snoozes, and stops | User can perceive haptic pattern on wrist | Requires paired real devices | Not tested |

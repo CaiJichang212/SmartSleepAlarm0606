@@ -37,6 +37,7 @@ v0.2 default flags:
 - `maxReAlarmCount = 2`
 
 Auto silence and re-sleep detection can only be enabled for named internal test runs with exported logs.
+Each named run must export JSONL that contains state transition, channel, runtime, sensor freshness, sensor summary, and outcome records.
 
 ## v0.2 Device Integration Gate
 
@@ -64,3 +65,4 @@ Before enabling auto silence or re-sleep detection for dogfood, complete this se
 8. Confirm stopping or snoozing records an outcome or channel event.
 9. Deny notification authorization and confirm the app shows a manual fallback prompt instead of implying reliable Smart Mode.
 10. Export JSONL and verify state transition, channel, runtime, sensor freshness, and outcome records are present.
+11. Confirm auto silence and re-sleep flags were enabled only for the named internal run and recorded alongside the exported run ID.

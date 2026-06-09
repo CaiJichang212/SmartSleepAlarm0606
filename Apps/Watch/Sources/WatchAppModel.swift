@@ -2,6 +2,23 @@ import Foundation
 import SmartSleepCore
 import SwiftUI
 
+struct WatchAlarmRunEngineFactory {
+    var featureFlags: FeatureFlags
+
+    init(featureFlags: FeatureFlags = .v02Default) {
+        self.featureFlags = featureFlags
+    }
+
+    @MainActor
+    func make(initialState: SmartAlarmState, ringer: WatchAlarmRinging) -> WatchAlarmRunEngine {
+        WatchAlarmRunEngine(
+            initialState: initialState,
+            ringer: ringer,
+            featureFlags: featureFlags
+        )
+    }
+}
+
 @MainActor
 final class WatchAppModel: ObservableObject {
     @Published var currentState: SmartAlarmState = .needsWatchArming
@@ -15,10 +32,12 @@ final class WatchAppModel: ObservableObject {
     private let runLogger: WatchAlarmRunLogging
     private let sensorSampler: WatchSensorSampling
     private let preflightChecker: WatchPreflightChecking
+    private let engineFactory: WatchAlarmRunEngineFactory
     private var runEngine: WatchAlarmRunEngine?
     private var ringTask: Task<Void, Never>?
     private var activeAlarmID: UUID?
     private var activeRunID: UUID?
+    private var latestFreshness: SensorFreshness?
 
     init(
         connectivity: WatchConnectivityClient = WatchConnectivityService(),
@@ -26,7 +45,8 @@ final class WatchAppModel: ObservableObject {
         ringer: WatchAlarmRinging = WatchAlarmRinger(),
         runLogger: WatchAlarmRunLogging = WatchAlarmRunLogger.temporary(),
         sensorSampler: WatchSensorSampling = CoreMotionWatchSensorSampler(),
-        preflightChecker: WatchPreflightChecking = WatchPreflightChecker()
+        preflightChecker: WatchPreflightChecking = WatchPreflightChecker(),
+        engineFactory: WatchAlarmRunEngineFactory = WatchAlarmRunEngineFactory()
     ) {
         self.connectivity = connectivity
         self.runtimeScheduler = runtimeScheduler
@@ -34,6 +54,7 @@ final class WatchAppModel: ObservableObject {
         self.runLogger = runLogger
         self.sensorSampler = sensorSampler
         self.preflightChecker = preflightChecker
+        self.engineFactory = engineFactory
         self.lastConfig = connectivity.latestAlarmConfig
         self.runtimeScheduler.onLogUpdated = { [weak self] log in
             self?.handleRuntimeLogUpdate(log)
@@ -67,6 +88,7 @@ final class WatchAppModel: ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 try? self.runLogger.recordFreshness(freshness)
+                self.latestFreshness = freshness
                 let smartActiveStates: Set<SmartAlarmState> = [.preMonitoring, .ringing, .awakeCandidate, .reRinging]
                 if !freshness.motionFresh && smartActiveStates.contains(self.currentState) {
                     if let runEngine = self.runEngine {
@@ -82,6 +104,26 @@ final class WatchAppModel: ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 try? self.runLogger.recordSummary(summary)
+                guard let freshness = self.latestFreshness,
+                      freshness.runId == summary.runId,
+                      let runEngine = self.runEngine else { return }
+                if [.ringing, .reRinging, .awakeCandidate].contains(self.currentState) {
+                    _ = runEngine.evaluateAwake(
+                        summary: summary,
+                        freshness: freshness,
+                        now: summary.windowEnd,
+                        runLogger: self.runLogger
+                    )
+                    self.currentState = runEngine.state
+                } else if self.currentState == .silencedMonitoring {
+                    _ = runEngine.evaluateReSleep(
+                        summary: summary,
+                        freshness: freshness,
+                        now: summary.windowEnd,
+                        runLogger: self.runLogger
+                    )
+                    self.currentState = runEngine.state
+                }
             }
         }
         self.connectivity.onConfigChanged = { [weak self] config in
@@ -150,7 +192,7 @@ final class WatchAppModel: ObservableObject {
         )
         failureReason = sessionScheduled ? nil : "runtime_session_not_scheduled"
         if sessionScheduled {
-            runEngine = WatchAlarmRunEngine(initialState: .sessionScheduled, ringer: ringer)
+            runEngine = engineFactory.make(initialState: .sessionScheduled, ringer: ringer)
         }
 
         let status = WatchArmingStatus(
