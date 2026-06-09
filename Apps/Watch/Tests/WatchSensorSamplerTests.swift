@@ -4,6 +4,35 @@ import SmartSleepCore
 
 @MainActor
 final class WatchSensorSamplerTests: XCTestCase {
+    func testMotionWindowAggregatorBuildsSummaryFromSamples() {
+        var aggregator = MotionWindowAggregator(
+            runId: UUID(),
+            windowStart: Date(timeIntervalSince1970: 0)
+        )
+        aggregator.append(MotionWindowSample(
+            timestamp: Date(timeIntervalSince1970: 1),
+            accelMagnitude: 0.1,
+            gyroMagnitude: 0.2,
+            attitudeRoll: 0,
+            attitudePitch: 0,
+            attitudeYaw: 0
+        ))
+        aggregator.append(MotionWindowSample(
+            timestamp: Date(timeIntervalSince1970: 2),
+            accelMagnitude: 1.0,
+            gyroMagnitude: 3.5,
+            attitudeRoll: 0.8,
+            attitudePitch: 0,
+            attitudeYaw: 0
+        ))
+
+        let summary = aggregator.summary(windowEnd: Date(timeIntervalSince1970: 3))
+
+        XCTAssertGreaterThan(summary.accelMagnitudeMean, 0.5)
+        XCTAssertEqual(summary.gyroPeak, 3.5, accuracy: 0.001)
+        XCTAssertGreaterThan(summary.postureDelta, 40)
+    }
+
     func testFakeSamplerEmitsMotionFreshness() {
         let runId = UUID()
         let sampler = FakeWatchSensorSampler()
