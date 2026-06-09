@@ -9,28 +9,6 @@ protocol WatchSensorSampling: AnyObject {
     func stop()
 }
 
-final class FakeWatchSensorSampler: WatchSensorSampling {
-    var onFreshness: ((SensorFreshness) -> Void)?
-    var onSummary: ((SensorSummary) -> Void)?
-    private(set) var activeRunId: UUID?
-
-    func start(runId: UUID) {
-        activeRunId = runId
-    }
-
-    func stop() {
-        activeRunId = nil
-    }
-
-    func emitFreshness(_ freshness: SensorFreshness) {
-        onFreshness?(freshness)
-    }
-
-    func emitSummary(_ summary: SensorSummary) {
-        onSummary?(summary)
-    }
-}
-
 struct MotionWindowSample: Equatable {
     var timestamp: Date
     var accelMagnitude: Double
