@@ -16,6 +16,7 @@ protocol BackupAlarmScheduling {
 
 final class RecordingBackupAlarmScheduler: BackupAlarmScheduling {
     private(set) var scheduledAlarmIDs: [UUID] = []
+    private(set) var scheduledChannels: [AlarmChannel] = []
     private(set) var cancelledAlarmIDs: [UUID] = []
     private let recordedChannel: AlarmChannel
 
@@ -47,6 +48,7 @@ final class RecordingBackupAlarmScheduler: BackupAlarmScheduling {
         }
 
         scheduledAlarmIDs.append(alarm.id)
+        scheduledChannels.append(recordedChannel)
         return AlarmChannelLog(
             runId: runId,
             channel: recordedChannel,

@@ -1,6 +1,19 @@
 import Foundation
 import SmartSleepCore
 
+protocol AlarmKitCapabilityProviding {
+    var isAlarmKitSupported: Bool { get }
+    func authorizationState() async -> AuthorizationState
+}
+
+struct DisabledAlarmKitCapabilityProvider: AlarmKitCapabilityProviding {
+    var isAlarmKitSupported: Bool { false }
+
+    func authorizationState() async -> AuthorizationState {
+        .unavailable
+    }
+}
+
 struct AlarmKitBackupAlarmScheduler: BackupAlarmScheduling {
     func scheduleBackup(
         for alarm: Alarm,

@@ -292,6 +292,142 @@ final class AlarmDashboardModelTests: XCTestCase {
         XCTAssertEqual(updated.smartStatus, .ready)
     }
 
+    func testModelAppliesSessionFailureWithoutOverwritingArmingStatus() async throws {
+        let repository = AlarmFileRepositoryAdapter(fileURL: temporaryFileURL())
+        let connectivity = FakePhoneConnectivityClient()
+        let model = AlarmDashboardModel(
+            repository: repository,
+            notificationAuthorizer: FakeNotificationAuthorizer(state: .authorized),
+            backupScheduler: RecordingBackupAlarmScheduler(),
+            connectivity: connectivity,
+            runLogger: AlarmRunLogger(logsDirectory: temporaryDirectoryURL().appendingPathComponent("AlarmRuns", isDirectory: true))
+        )
+        let created = AlarmCardState.make(
+            nextFireAt: Date(timeIntervalSince1970: 3_600),
+            label: "Runtime Failure",
+            smartEnabled: true,
+            snoozeMinutes: 9
+        )
+
+        await model.refreshNotificationAuthorization()
+        model.create(created)
+        await flushMainActorWork()
+
+        connectivity.deliverArmingStatus(WatchArmingStatus(
+            alarmId: created.id,
+            isArmed: true,
+            sessionScheduled: true,
+            fallbackChannel: .iOSLocalNotification,
+            failureReason: nil
+        ))
+        connectivity.deliverSessionResult(SessionResultPayload(
+            alarmId: created.id,
+            runId: UUID(),
+            state: .fallbackPhoneAlarm,
+            scheduledAt: Date(timeIntervalSince1970: 10),
+            failureReason: "runtime_session_invalidated"
+        ))
+        await flushMainActorWork()
+
+        let updated = try XCTUnwrap(model.alarms.first { $0.id == created.id })
+        XCTAssertEqual(updated.armingStatus?.isArmed, true)
+        XCTAssertEqual(updated.armingStatus?.sessionScheduled, true)
+        XCTAssertEqual(updated.sessionResult?.failureReason, "runtime_session_invalidated")
+        XCTAssertEqual(updated.smartStatus, .fallbackOnly)
+        XCTAssertEqual(model.userVisibleWarning, "Watch runtime unavailable; iPhone fallback is active. runtime_session_invalidated")
+    }
+
+    func testModelStoresRunSummariesByRunIdAndOnlyUsesLatestForDebugDisplay() async throws {
+        let repository = AlarmFileRepositoryAdapter(fileURL: temporaryFileURL())
+        let connectivity = FakePhoneConnectivityClient()
+        let model = AlarmDashboardModel(
+            repository: repository,
+            notificationAuthorizer: FakeNotificationAuthorizer(state: .authorized),
+            backupScheduler: RecordingBackupAlarmScheduler(),
+            connectivity: connectivity,
+            runLogger: AlarmRunLogger(logsDirectory: temporaryDirectoryURL().appendingPathComponent("AlarmRuns", isDirectory: true))
+        )
+        let firstRunId = UUID()
+        let secondRunId = UUID()
+
+        connectivity.deliverRunLogSummary(RunLogSummaryPayload(
+            runId: firstRunId,
+            finalState: .completed,
+            outcome: .userStopped,
+            eventCount: 4,
+            fallbackUsed: false
+        ))
+        connectivity.deliverRunLogSummary(RunLogSummaryPayload(
+            runId: secondRunId,
+            finalState: .fallbackPhoneAlarm,
+            outcome: nil,
+            eventCount: 6,
+            fallbackUsed: true
+        ))
+        await flushMainActorWork()
+
+        XCTAssertEqual(model.latestRunSummary?.runId, secondRunId)
+        XCTAssertEqual(model.latestRunSummary?.eventCount, 6)
+    }
+
+    func testAlarmKitCapabilityProviderAllowsAlarmKitFallbackWhenSupportedAndAuthorized() async throws {
+        let repository = AlarmFileRepositoryAdapter(fileURL: temporaryFileURL())
+        let scheduler = RecordingBackupAlarmScheduler(recordedChannel: .iOSAlarmKit)
+        let model = AlarmDashboardModel(
+            repository: repository,
+            notificationAuthorizer: FakeNotificationAuthorizer(state: .authorized),
+            backupScheduler: scheduler,
+            connectivity: FakePhoneConnectivityClient(),
+            runLogger: AlarmRunLogger(logsDirectory: temporaryDirectoryURL().appendingPathComponent("AlarmRuns", isDirectory: true)),
+            alarmKitCapabilityProvider: FakeAlarmKitCapabilityProvider(isSupported: true, authorization: .authorized)
+        )
+        var alarm = AlarmCardState.make(
+            nextFireAt: Date(timeIntervalSince1970: 3_600),
+            label: "AlarmKit",
+            smartEnabled: true,
+            snoozeMinutes: 9
+        )
+        alarm.alarm.backupChannelPreferred = .iOSAlarmKit
+        alarm.armingStatus = WatchArmingStatus(
+            alarmId: alarm.id,
+            isArmed: false,
+            sessionScheduled: false,
+            fallbackChannel: .iOSAlarmKit,
+            failureReason: "watch_not_armed"
+        )
+
+        await model.refreshNotificationAuthorization()
+        model.create(alarm)
+        await flushMainActorWork()
+
+        XCTAssertEqual(scheduler.scheduledChannels.last, .iOSAlarmKit)
+    }
+
+    func testDisabledAlarmKitProviderFallsBackToLocalNotification() async throws {
+        let repository = AlarmFileRepositoryAdapter(fileURL: temporaryFileURL())
+        let scheduler = RecordingBackupAlarmScheduler(recordedChannel: .iOSLocalNotification)
+        let model = AlarmDashboardModel(
+            repository: repository,
+            notificationAuthorizer: FakeNotificationAuthorizer(state: .authorized),
+            backupScheduler: scheduler,
+            connectivity: FakePhoneConnectivityClient(),
+            runLogger: AlarmRunLogger(logsDirectory: temporaryDirectoryURL().appendingPathComponent("AlarmRuns", isDirectory: true)),
+            alarmKitCapabilityProvider: FakeAlarmKitCapabilityProvider(isSupported: false, authorization: .unavailable)
+        )
+        let alarm = AlarmCardState.make(
+            nextFireAt: Date(timeIntervalSince1970: 3_600),
+            label: "Local",
+            smartEnabled: false,
+            snoozeMinutes: 9
+        )
+
+        await model.refreshNotificationAuthorization()
+        model.create(alarm)
+        await flushMainActorWork()
+
+        XCTAssertEqual(scheduler.scheduledChannels.last, .iOSLocalNotification)
+    }
+
     func testModelRecordsOutcomeFeedbackForLastRun() async throws {
         let repository = AlarmFileRepositoryAdapter(fileURL: temporaryFileURL())
         let logsDirectory = temporaryDirectoryURL().appendingPathComponent("AlarmRuns", isDirectory: true)
@@ -392,5 +528,16 @@ final class AlarmDashboardModelTests: XCTestCase {
         for _ in 0..<3 {
             await Task.yield()
         }
+    }
+}
+
+private struct FakeAlarmKitCapabilityProvider: AlarmKitCapabilityProviding {
+    let isSupported: Bool
+    let authorization: AuthorizationState
+
+    var isAlarmKitSupported: Bool { isSupported }
+
+    func authorizationState() async -> AuthorizationState {
+        authorization
     }
 }
