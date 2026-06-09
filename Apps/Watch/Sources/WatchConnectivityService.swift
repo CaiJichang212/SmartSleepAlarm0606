@@ -10,36 +10,6 @@ protocol WatchConnectivityClient: AnyObject {
     func sendRunLogSummary(_ payload: RunLogSummaryPayload)
 }
 
-final class FakeWatchConnectivityClient: WatchConnectivityClient {
-    var latestAlarmConfig: AlarmConfigPayload? {
-        didSet { onConfigChanged?(latestAlarmConfig) }
-    }
-    var onConfigChanged: ((AlarmConfigPayload?) -> Void)?
-    private(set) var outboundMessages: [SmartSleepConnectivityMessage] = []
-
-    init(latestAlarmConfig: AlarmConfigPayload? = nil) {
-        self.latestAlarmConfig = latestAlarmConfig
-    }
-
-    func sendArmingResult(_ payload: ArmingResultPayload) {
-        outboundMessages.append(.armingResult(payload))
-    }
-
-    func sendSessionResult(_ payload: SessionResultPayload) {
-        outboundMessages.append(.sessionResult(payload))
-    }
-
-    func sendRunLogSummary(_ payload: RunLogSummaryPayload) {
-        outboundMessages.append(.runLogSummary(payload))
-    }
-
-    func deliverCancellation(for alarmId: UUID) {
-        if latestAlarmConfig?.alarm.id == alarmId {
-            latestAlarmConfig = nil
-        }
-    }
-}
-
 final class WatchConnectivityService: NSObject, ObservableObject, WatchConnectivityClient {
     @Published private(set) var latestAlarmConfig: AlarmConfigPayload? {
         didSet { onConfigChanged?(latestAlarmConfig) }
