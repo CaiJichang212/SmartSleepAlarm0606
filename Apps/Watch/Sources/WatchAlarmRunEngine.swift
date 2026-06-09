@@ -63,7 +63,8 @@ final class WatchAlarmRunEngine: ObservableObject {
     }
 
     func snooze(runLogger: WatchAlarmRunLogging, at date: Date = Date()) {
-        guard state == .ringing || state == .reRinging || state == .ringingNoSmart else { return }
+        guard state == .ringing || state == .reRinging || state == .ringingNoSmart || state == .awakeCandidate else { return }
+        clearAwakeCandidateTrackingIfNeeded()
         transition(to: .snoozed, reason: "user_snoozed", at: date, runLogger: runLogger)
         ringer.snooze()
         guard let activeRunId else { return }
@@ -82,7 +83,13 @@ final class WatchAlarmRunEngine: ObservableObject {
     }
 
     func stop(runLogger: WatchAlarmRunLogging, at date: Date = Date()) {
-        guard state == .ringing || state == .reRinging || state == .snoozed || state == .ringingNoSmart else { return }
+        guard state == .ringing
+                || state == .reRinging
+                || state == .snoozed
+                || state == .ringingNoSmart
+                || state == .awakeCandidate
+                || state == .silencedMonitoring else { return }
+        clearAwakeCandidateTrackingIfNeeded()
         transition(to: .completed, reason: "user_stopped", at: date, runLogger: runLogger)
         ringer.stop()
         guard let activeRunId else { return }
@@ -119,12 +126,6 @@ final class WatchAlarmRunEngine: ObservableObject {
         let activeStates: Set<SmartAlarmState> = [.preMonitoring, .ringing, .awakeCandidate, .reRinging]
         guard activeStates.contains(state) else { return }
         transition(to: .ringingNoSmart, reason: "motion_became_stale", at: date, runLogger: runLogger)
-    }
-
-    func autoSilenceConfirmed(at date: Date = Date()) {
-        guard featureFlags.autoSilenceEnabled else { return }
-        state = .silencedMonitoring
-        silencedAt = date
     }
 
     func evaluateAwake(
@@ -251,6 +252,11 @@ final class WatchAlarmRunEngine: ObservableObject {
             failureReason: nil,
             userVisibleState: "re_ringing"
         ))
+    }
+
+    private func clearAwakeCandidateTrackingIfNeeded() {
+        awakeCandidateStartedAt = nil
+        awakeCandidateOriginState = nil
     }
 
     private func transition(
