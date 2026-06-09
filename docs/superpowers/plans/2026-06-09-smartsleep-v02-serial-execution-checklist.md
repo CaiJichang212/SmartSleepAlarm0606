@@ -1,5 +1,7 @@
 # SmartSleep v0.2 Serial Execution Checklist
 
+> 说明：本清单约束的是提交内容的集成顺序，不等价于 Git 分支已经整理成逐级派生的严格链式拓扑。当前 3 个实现分支与 `codex/p0-reliability-chain` 的共同基线仍为 `9ed6b93851c6258b592e4a27fc697a9ce66df29d`；收口时必须按“串行叠加、非串行派生”解释 merge/rebase 风险。
+
 ## 分支 1: `codex/smartsleep-v02-audit-next-development`
 
 - 目标：固定 4 份计划文档，记录串行执行策略与验收框架。

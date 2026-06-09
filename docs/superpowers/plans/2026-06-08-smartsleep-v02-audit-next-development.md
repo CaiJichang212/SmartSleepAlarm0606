@@ -10,14 +10,18 @@
 
 ## 当前执行策略
 
-- 不采用多分支并行开发，改为严格串行。
+- 不采用多分支并行开发，改为串行集成。
 - `codex/smartsleep-v02-audit-next-development` 只负责计划输入、执行清单、验收汇总，不承担产品代码改动。
-- 串行基线顺序固定为：
+- 逻辑集成顺序固定为：
   1. `codex/smartsleep-v02-audit-next-development`
   2. `codex/smartsleep-v02-watch-ios-connectivity-run-summary`
   3. `codex/smartsleep-v02-watch-sensor-preflight`
   4. `codex/smartsleep-v02-experimental-auto-silence-resleep`
   5. 回到 `codex/smartsleep-v02-audit-next-development` 收口
+- 当前 Git 拓扑说明：
+  - 上述 3 个实现分支的提交内容按顺序设计和验收，但分支并不是逐级从前一分支派生。
+  - 当前 `merge-base` 结果显示，`codex/smartsleep-v02-watch-ios-connectivity-run-summary`、`codex/smartsleep-v02-watch-sensor-preflight`、`codex/smartsleep-v02-experimental-auto-silence-resleep` 与 `codex/p0-reliability-chain` 的共同基线都是 `9ed6b93851c6258b592e4a27fc697a9ce66df29d`。
+  - 因此“串行”在本轮表示提交内容和集成顺序串行叠加，不表示 Git 分支拓扑已经整理为严格链式派生。后续 merge/rebase 需要按这个事实评估风险。
 
 ## 修订原则
 
