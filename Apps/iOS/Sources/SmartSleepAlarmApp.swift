@@ -11,29 +11,81 @@ struct SmartSleepAlarmApp: App {
 }
 
 private struct AlarmDashboardView: View {
-    @State private var alarms: [AlarmCardState] = AlarmCardState.seed
-    @State private var isCreatingAlarm = false
-    @State private var exportedLogText = ""
+    @StateObject private var model = AlarmDashboardModel()
+    @State private var editorAlarm: AlarmCardState?
 
     var body: some View {
         NavigationStack {
             List {
-                Section {
-                    ForEach(alarms) { alarm in
-                        AlarmCard(alarm: alarm)
+                if let warning = model.userVisibleWarning {
+                    Section {
+                        Label(warning, systemImage: "exclamationmark.triangle")
                     }
-                    .onDelete(perform: deleteAlarm)
                 }
 
-                Section("内部测试日志") {
-                    Button {
-                        exportedLogText = LogPreviewBuilder.makePreview(for: alarms)
-                    } label: {
-                        Label("导出本地 JSON 预览", systemImage: "square.and.arrow.up")
+                Section("通知") {
+                    LabeledContent("iPhone 兜底", value: notificationStatusText)
+
+                    if model.notificationAuthorizationState != .authorized {
+                        Button {
+                            Task {
+                                await model.requestNotificationAuthorization()
+                            }
+                        } label: {
+                            Label("允许通知", systemImage: "bell.badge")
+                        }
+                    }
+                }
+
+                Section {
+                    ForEach(model.alarms) { alarm in
+                        AlarmCard(alarm: alarm)
+                            .onTapGesture {
+                                editorAlarm = alarm
+                            }
+                    }
+                    .onDelete(perform: model.delete)
+                }
+
+                Section("内部测试预览") {
+                    if let latestRunSummary = model.latestRunSummary {
+                        LabeledContent("最新 Run", value: latestRunSummary.finalState.rawValue)
+                        LabeledContent("最新 Outcome", value: latestRunSummary.outcome?.rawValue ?? "none")
+                        LabeledContent("最新 Event 数", value: "\(latestRunSummary.eventCount)")
                     }
 
-                    if !exportedLogText.isEmpty {
-                        Text(exportedLogText)
+                    Button {
+                        model.exportPreview()
+                    } label: {
+                        Label("导出闹铃 JSON 预览", systemImage: "square.and.arrow.up")
+                    }
+
+                    Button {
+                        model.recordFeedback(.wokeUp, notes: "User reported awake during dogfood.")
+                    } label: {
+                        Label("标注：已醒", systemImage: "checkmark.circle")
+                    }
+
+                    Button {
+                        model.recordFeedback(.falseSilence, notes: "User reported false silence during dogfood.")
+                    } label: {
+                        Label("标注：误静音", systemImage: "exclamationmark.circle")
+                    }
+
+                    Button {
+                        model.recordFeedback(.falseReAlarm, notes: "User reported false re-alarm during dogfood.")
+                    } label: {
+                        Label("标注：误重响", systemImage: "bell.badge")
+                    }
+
+                    Button {
+                        model.recordFeedback(.missedAlarm, notes: "User reported missed alarm during dogfood.")
+                    } label: {
+                        Label("标注：没响", systemImage: "xmark.octagon")
+                    }
+
+                    if !model.exportedLogText.isEmpty {
+                        Text(model.exportedLogText)
                             .font(.caption.monospaced())
                             .textSelection(.enabled)
                             .lineLimit(8)
@@ -44,23 +96,42 @@ private struct AlarmDashboardView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        isCreatingAlarm = true
+                        editorAlarm = AlarmCardState.make(
+                            nextFireAt: Date.now.addingTimeInterval(3600),
+                            label: "Morning",
+                            smartEnabled: true,
+                            snoozeMinutes: 9
+                        )
                     } label: {
                         Label("新增闹铃", systemImage: "plus")
                     }
                 }
             }
-            .sheet(isPresented: $isCreatingAlarm) {
-                CreateAlarmView { alarm in
-                    alarms.append(alarm)
-                    alarms.sort { $0.nextFireAt < $1.nextFireAt }
+            .sheet(item: $editorAlarm) { alarm in
+                EditAlarmView(alarm: alarm) { edited in
+                    if model.alarms.contains(where: { $0.id == edited.id }) {
+                        model.update(edited)
+                    } else {
+                        model.create(edited)
+                    }
                 }
             }
         }
     }
 
-    private func deleteAlarm(at offsets: IndexSet) {
-        alarms.remove(atOffsets: offsets)
+    private var notificationStatusText: String {
+        switch model.notificationAuthorizationState {
+        case .authorized:
+            return "已授权"
+        case .denied:
+            return "已拒绝"
+        case .notDetermined:
+            return "待确认"
+        case .unavailable:
+            return "不可用"
+        case .unknown:
+            return "未知"
+        }
     }
 }
 
@@ -83,6 +154,11 @@ private struct AlarmCard: View {
             HStack(spacing: 8) {
                 Label(alarm.watchStatusLabel, systemImage: alarm.watchIcon)
                 Label(alarm.backupLabel, systemImage: "iphone")
+                if !alarm.alarm.isEnabled {
+                    Label("Disabled", systemImage: "power")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -138,30 +214,43 @@ private struct StatusBadge: View {
     }
 }
 
-private struct CreateAlarmView: View {
+private struct EditAlarmView: View {
     @Environment(\.dismiss) private var dismiss
 
-    @State private var nextFireAt = Date.now.addingTimeInterval(3600)
-    @State private var label = "Morning"
-    @State private var smartEnabled = true
-    @State private var snoozeMinutes = 9
+    @State private var nextFireAt: Date
+    @State private var label: String
+    @State private var isEnabled: Bool
+    @State private var smartEnabled: Bool
+    @State private var snoozeMinutes: Int
 
-    let onCreate: (AlarmCardState) -> Void
+    let alarm: AlarmCardState
+    let onSave: (AlarmCardState) -> Void
+
+    init(alarm: AlarmCardState, onSave: @escaping (AlarmCardState) -> Void) {
+        self.alarm = alarm
+        self.onSave = onSave
+        _nextFireAt = State(initialValue: alarm.nextFireAt)
+        _label = State(initialValue: alarm.label)
+        _isEnabled = State(initialValue: alarm.alarm.isEnabled)
+        _smartEnabled = State(initialValue: alarm.alarm.smartEnabled)
+        _snoozeMinutes = State(initialValue: alarm.alarm.snoozeIntervalMin)
+    }
 
     var body: some View {
         NavigationStack {
             Form {
                 DatePicker("时间", selection: $nextFireAt, displayedComponents: .hourAndMinute)
                 TextField("标签", text: $label)
+                Toggle("启用", isOn: $isEnabled)
                 Toggle("Smart Mode", isOn: $smartEnabled)
                 Stepper("贪睡 \(snoozeMinutes) 分钟", value: $snoozeMinutes, in: 5...20)
 
                 Section("就绪规则") {
-                    LabeledContent("Watch 武装", value: smartEnabled ? "创建后需要确认" : "不需要")
-                    LabeledContent("兜底通道", value: "iPhone AlarmKit 优先")
+                    LabeledContent("Watch 启用确认", value: smartEnabled ? "创建后需要确认" : "不需要")
+                    LabeledContent("兜底通道", value: "iPhone 本地通知")
                 }
             }
-            .navigationTitle("新增闹铃")
+            .navigationTitle("闹铃")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消") {
@@ -169,13 +258,17 @@ private struct CreateAlarmView: View {
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("创建") {
-                        onCreate(AlarmCardState.make(
+                    Button("保存") {
+                        var edited = AlarmCardState.make(
+                            id: alarm.id,
                             nextFireAt: nextFireAt,
                             label: label,
                             smartEnabled: smartEnabled,
                             snoozeMinutes: snoozeMinutes
-                        ))
+                        )
+                        edited.alarm.isEnabled = isEnabled
+                        edited.alarm.updatedAt = Date()
+                        onSave(edited)
                         dismiss()
                     }
                 }
@@ -184,14 +277,19 @@ private struct CreateAlarmView: View {
     }
 }
 
-private struct AlarmCardState: Identifiable, Equatable {
+struct AlarmCardState: Identifiable, Equatable {
     var id: UUID
     var alarm: Alarm
     var armingStatus: WatchArmingStatus?
+    var sessionResult: SessionResultPayload?
     var nextFireAt: Date
 
     var smartStatus: SmartModeStatus {
-        SmartModeResolver.status(for: alarm, arming: armingStatus)
+        if let sessionResult,
+           sessionResult.failureReason != nil || sessionResult.state == .fallbackPhoneAlarm {
+            return .fallbackOnly
+        }
+        return SmartModeResolver.status(for: alarm, arming: armingStatus)
     }
 
     var timeLabel: String {
@@ -204,8 +302,8 @@ private struct AlarmCardState: Identifiable, Equatable {
 
     var watchStatusLabel: String {
         switch smartStatus {
-        case .ready: "Watch armed"
-        case .needsWatchArming: "Watch needs arming"
+        case .ready: "Watch 已就绪"
+        case .needsWatchArming: "等待 Watch 确认"
         case .fallbackOnly: "Runtime failed"
         case .failed: "Unavailable"
         case .smartOff: "Smart disabled"
@@ -216,12 +314,42 @@ private struct AlarmCardState: Identifiable, Equatable {
         smartStatus == .ready ? "applewatch.radiowaves.left.and.right" : "applewatch"
     }
 
-    var backupLabel: String {
-        "Backup: \(alarm.backupChannelPreferred.rawValue)"
+    var requiredBackupChannel: AlarmChannel {
+        AlarmSchedulerPolicy().decision(for: alarm, arming: armingStatus).requiredBackupChannel
     }
 
-    static func make(nextFireAt: Date, label: String, smartEnabled: Bool, snoozeMinutes: Int) -> AlarmCardState {
-        let id = UUID()
+    var backupLabel: String {
+        "Backup: \(requiredBackupChannel.rawValue)"
+    }
+
+    static func from(
+        alarm: Alarm,
+        armingStatus: WatchArmingStatus? = nil,
+        sessionResult: SessionResultPayload? = nil,
+        calendar: Calendar = .current,
+        now: Date = Date()
+    ) -> AlarmCardState {
+        let hour = alarm.timeOfDay.hour ?? 7
+        let minute = alarm.timeOfDay.minute ?? 30
+        let base = calendar.startOfDay(for: now)
+        let candidate = calendar.date(bySettingHour: hour, minute: minute, second: 0, of: base) ?? now
+        let nextFireAt = candidate > now ? candidate : calendar.date(byAdding: .day, value: 1, to: candidate) ?? candidate
+        return AlarmCardState(
+            id: alarm.id,
+            alarm: alarm,
+            armingStatus: armingStatus,
+            sessionResult: sessionResult,
+            nextFireAt: nextFireAt
+        )
+    }
+
+    static func make(
+        id: UUID,
+        nextFireAt: Date,
+        label: String,
+        smartEnabled: Bool,
+        snoozeMinutes: Int
+    ) -> AlarmCardState {
         let components = Calendar.current.dateComponents([.hour, .minute], from: nextFireAt)
         let alarm = Alarm(
             id: id,
@@ -235,9 +363,19 @@ private struct AlarmCardState: Identifiable, Equatable {
             snoozeIntervalMin: snoozeMinutes,
             maxSnoozeCount: 3,
             maxReAlarmCount: 2,
-            backupChannelPreferred: .iOSAlarmKit
+            backupChannelPreferred: .iOSLocalNotification
         )
-        return AlarmCardState(id: id, alarm: alarm, armingStatus: nil, nextFireAt: nextFireAt)
+        return AlarmCardState(id: id, alarm: alarm, armingStatus: nil, sessionResult: nil, nextFireAt: nextFireAt)
+    }
+
+    static func make(nextFireAt: Date, label: String, smartEnabled: Bool, snoozeMinutes: Int) -> AlarmCardState {
+        make(
+            id: UUID(),
+            nextFireAt: nextFireAt,
+            label: label,
+            smartEnabled: smartEnabled,
+            snoozeMinutes: snoozeMinutes
+        )
     }
 
     static let seed: [AlarmCardState] = {
@@ -248,7 +386,7 @@ private struct AlarmCardState: Identifiable, Equatable {
             alarmId: ready.id,
             isArmed: true,
             sessionScheduled: true,
-            fallbackChannel: .iOSAlarmKit,
+            fallbackChannel: .iOSLocalNotification,
             failureReason: nil
         )
 
@@ -265,14 +403,14 @@ private struct AlarmCardState: Identifiable, Equatable {
     }()
 }
 
-private enum LogPreviewBuilder {
+enum LogPreviewBuilder {
     static func makePreview(for alarms: [AlarmCardState]) -> String {
         let payload = alarms.map { alarm in
             [
                 "alarmId": alarm.id.uuidString,
                 "label": alarm.label,
                 "smartStatus": alarm.smartStatus.rawValue,
-                "backupChannel": alarm.alarm.backupChannelPreferred.rawValue
+                "requiredBackupChannel": alarm.requiredBackupChannel.rawValue
             ]
         }
         guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]),
@@ -282,4 +420,3 @@ private enum LogPreviewBuilder {
         return text
     }
 }
-

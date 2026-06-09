@@ -2,7 +2,7 @@
 
 ## Goal
 
-Verify whether Watch arming can schedule and start a runtime session early enough for pre-monitoring.
+Verify whether Watch enable confirmation can schedule and start a runtime session early enough for pre-monitoring.
 
 ## Matrix
 
@@ -18,3 +18,7 @@ Verify whether Watch arming can schedule and start a runtime session early enoug
 
 Supported and downgraded scenarios are explicit, and each failure can be represented in runtime/session logs.
 
+## Runtime Session Adapter
+
+The runtime-session adapter is `Apps/Watch/Sources/WatchRuntimeSessionScheduler.swift`.
+Simulator build verifies API compilation only. Real-device rows are required for background scheduling, lock-screen behavior, force-quit behavior, low battery behavior, disconnected phone behavior, and overnight behavior.

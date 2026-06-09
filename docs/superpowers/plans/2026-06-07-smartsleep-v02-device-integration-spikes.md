@@ -802,7 +802,7 @@ private struct WatchArmingView: View {
                     Button {
                         model.armCurrentAlarm()
                     } label: {
-                        Label(model.sessionScheduled ? "已武装" : "今晚启用", systemImage: model.sessionScheduled ? "checkmark.seal.fill" : "bolt.badge.clock")
+                        Label(model.sessionScheduled ? "已就绪" : "今晚启用", systemImage: model.sessionScheduled ? "checkmark.seal.fill" : "bolt.badge.clock")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
@@ -828,7 +828,7 @@ Expected:
 
 - watchOS build succeeds.
 - Watch UI can show `--:--` and `未收到` when no config exists.
-- Pressing arm with no config records `missing_alarm_config` instead of Ready.
+- Pressing enable confirmation with no config records `missing_alarm_config` instead of Ready.
 
 - [ ] **Step 5: Commit**
 
@@ -1105,7 +1105,7 @@ Expected:
 
 - watchOS build succeeds.
 - `WatchAppModel` can be constructed with `FakeRuntimeSessionScheduler(shouldSucceed: false)` and must report `runtime_session_not_scheduled`.
-- A successful arm sends `SessionResultPayload` through the connectivity client.
+- A successful enable confirmation sends `SessionResultPayload` through the connectivity client.
 
 - [ ] **Step 6: Commit**
 
@@ -1127,8 +1127,8 @@ git commit -m "feat: add watch runtime and ringer adapters"
 Append to `docs/qa/device-test-matrix.md`:
 
 ```markdown
-| Connectivity | iPhone sends alarm config | Watch receives config and can arm | Requires paired real devices | Not tested |
-| Connectivity | Watch sends arming result | iPhone status updates to Ready or Fallback | Requires paired real devices | Not tested |
+| Connectivity | iPhone sends alarm config | Watch receives config and can complete enable confirmation | Requires paired real devices | Not tested |
+| Connectivity | Watch sends enable-confirmation result | iPhone status updates to Ready or Fallback | Requires paired real devices | Not tested |
 | Runtime | Watch schedules runtime session | Runtime log records scheduled target start | Requires paired real devices | Not tested |
 | Fallback | iPhone fallback notification scheduled | `AlarmChannelLog` records `iOSLocalNotification` | Simulator plus JSONL inspection | Not tested |
 | Notification | iPhone fallback fires under Silent Mode and Sleep Focus | User notices fallback alarm | Requires paired real devices | Not tested |
@@ -1147,8 +1147,8 @@ Before a dogfood run is counted as valid:
 
 - iPhone and Apple Watch are paired to the same Apple ID.
 - iPhone app has notification authorization.
-- Watch app shows a received alarm config before arming.
-- Watch arming failure with no config is recorded as `missing_alarm_config`.
+- Watch app shows a received alarm config before enable confirmation.
+- Watch enable-confirmation failure with no config is recorded as `missing_alarm_config`.
 - iPhone fallback channel is recorded as `iOSLocalNotification`.
 - Exported JSONL contains at least one state transition and one channel event for the run.
 - Runtime-session result is recorded as success or `runtime_session_not_scheduled`.

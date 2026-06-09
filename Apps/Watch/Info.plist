@@ -20,7 +20,11 @@
 	<string>0.2</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>Heart rate is used only as an optional Smart Mode boost and never as the sole wake signal.</string>
 	<key>WKApplication</key>
 	<true/>
+	<key>WKCompanionAppBundleIdentifier</key>
+	<string>com.smartsleep.alarm</string>
 </dict>
 </plist>

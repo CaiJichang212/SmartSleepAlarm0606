@@ -11,16 +11,14 @@ struct SmartSleepWatchApp: App {
 }
 
 private struct WatchArmingView: View {
-    @State private var isArmed = false
-    @State private var sessionScheduled = false
-    @State private var currentState = SmartAlarmState.needsWatchArming
+    @StateObject private var model = WatchAppModel()
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("07:30")
+                        Text(model.lastConfig?.nextFireAt.formatted(date: .omitted, time: .shortened) ?? "--:--")
                             .font(.system(size: 34, weight: .semibold, design: .rounded))
                             .monospacedDigit()
                         Text("下一次闹铃")
@@ -28,25 +26,33 @@ private struct WatchArmingView: View {
                             .foregroundStyle(.secondary)
                     }
 
-                    StatusLine(title: "佩戴状态", value: "可用", systemImage: "applewatch")
-                    StatusLine(title: "Motion", value: "已启用", systemImage: "sensor.tag.radiowaves.forward")
-                    StatusLine(title: "iPhone 兜底", value: "AlarmKit", systemImage: "iphone")
-                    StatusLine(title: "Runtime", value: sessionScheduled ? "已预约" : "待预约", systemImage: "clock.badge.checkmark")
+                    StatusLine(title: "配置", value: model.lastConfig == nil ? "未收到" : "已收到", systemImage: "antenna.radiowaves.left.and.right")
+                    StatusLine(title: "iPhone 兜底", value: "Local Notification", systemImage: "iphone")
+                    StatusLine(title: "Runtime", value: model.sessionScheduled ? "已预约" : "待预约", systemImage: "clock.badge.checkmark")
+
+                    if let failureReason = model.failureReason {
+                        Text(failureReason)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.orange)
+                    }
 
                     Button {
-                        isArmed = true
-                        sessionScheduled = true
-                        currentState = .sessionScheduled
+                        model.armCurrentAlarm()
                     } label: {
-                        Label(isArmed ? "已武装" : "今晚启用", systemImage: isArmed ? "checkmark.seal.fill" : "bolt.badge.clock")
+                        Label(model.sessionScheduled ? "已就绪" : "今晚启用", systemImage: model.sessionScheduled ? "checkmark.seal.fill" : "bolt.badge.clock")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(isArmed)
+                    .disabled(model.sessionScheduled)
 
                     Divider()
 
-                    RingingControls(currentState: $currentState)
+                    RingingControls(
+                        currentState: model.currentState,
+                        onSimulateRinging: model.simulateRinging,
+                        onSnooze: model.snooze,
+                        onStop: model.stop
+                    )
                 }
                 .padding(.vertical)
             }
@@ -72,7 +78,10 @@ private struct StatusLine: View {
 }
 
 private struct RingingControls: View {
-    @Binding var currentState: SmartAlarmState
+    let currentState: SmartAlarmState
+    let onSimulateRinging: () -> Void
+    let onSnooze: () -> Void
+    let onStop: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -80,24 +89,18 @@ private struct RingingControls: View {
                 .font(.headline)
 
             HStack {
-                Button {
-                    currentState = .ringing
-                } label: {
+                Button(action: onSimulateRinging) {
                     Image(systemName: "bell.and.waves.left.and.right")
                 }
                 .accessibilityLabel("模拟响铃")
 
-                Button {
-                    currentState = .snoozed
-                } label: {
+                Button(action: onSnooze) {
                     Image(systemName: "zzz")
                 }
                 .disabled(currentState != .ringing && currentState != .reRinging)
                 .accessibilityLabel("贪睡")
 
-                Button {
-                    currentState = .completed
-                } label: {
+                Button(action: onStop) {
                     Image(systemName: "stop.fill")
                 }
                 .disabled(currentState != .ringing && currentState != .reRinging && currentState != .snoozed)
@@ -110,4 +113,3 @@ private struct RingingControls: View {
         }
     }
 }
-
