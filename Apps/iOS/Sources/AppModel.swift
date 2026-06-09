@@ -14,31 +14,49 @@ final class AlarmDashboardModel: ObservableObject {
     private let backupScheduler: BackupAlarmScheduling
     private let connectivity: PhoneConnectivityClient
     private let runLogger: AlarmRunLogging
+    private let alarmKitCapabilityProvider: AlarmKitCapabilityProviding
     private let schedulerPolicy = AlarmSchedulerPolicy()
     private var armingStatuses: [UUID: WatchArmingStatus] = [:]
+    private var sessionResults: [UUID: SessionResultPayload] = [:]
+    private var runSummaries: [UUID: RunLogSummaryPayload] = [:]
     private var runIDs: [UUID: UUID] = [:]
     private var lastExportedRunID: UUID?
+    @Published private(set) var latestRunSummary: RunLogSummaryPayload?
 
     init(
         repository: AlarmRepository,
         notificationAuthorizer: NotificationAuthorizing = NotificationPermissionService(),
         backupScheduler: BackupAlarmScheduling = RoutingBackupAlarmScheduler(),
         connectivity: PhoneConnectivityClient = IOSConnectivityService(),
-        runLogger: AlarmRunLogging = AlarmRunLogger.temporary()
+        runLogger: AlarmRunLogging = AlarmRunLogger.temporary(),
+        alarmKitCapabilityProvider: AlarmKitCapabilityProviding = DisabledAlarmKitCapabilityProvider()
     ) {
         self.repository = repository
         self.notificationAuthorizer = notificationAuthorizer
         self.backupScheduler = backupScheduler
         self.connectivity = connectivity
         self.runLogger = runLogger
+        self.alarmKitCapabilityProvider = alarmKitCapabilityProvider
         self.connectivity.onArmingStatusChanged = { [weak self] status in
             Task { @MainActor in
                 self?.applyArmingStatus(status)
             }
         }
+        self.connectivity.onSessionResultChanged = { [weak self] payload in
+            Task { @MainActor in
+                self?.applySessionResult(payload)
+            }
+        }
+        self.connectivity.onRunLogSummaryChanged = { [weak self] payload in
+            Task { @MainActor in
+                self?.applyRunLogSummary(payload)
+            }
+        }
         reload()
         Task { await refreshNotificationAuthorization() }
         applyArmingStatus(connectivity.lastArmingStatus)
+        applySessionResult(connectivity.lastSessionResult)
+        applyRunLogSummary(connectivity.lastRunLogSummary)
     }
 
     convenience init() {
@@ -60,7 +78,11 @@ final class AlarmDashboardModel: ObservableObject {
         do {
             let persisted = try repository.list()
             alarms = persisted.map { alarm in
-                AlarmCardState.from(alarm: alarm, armingStatus: armingStatuses[alarm.id])
+                AlarmCardState.from(
+                    alarm: alarm,
+                    armingStatus: armingStatuses[alarm.id],
+                    sessionResult: sessionResults[alarm.id]
+                )
             }
             if alarms.isEmpty {
                 alarms = AlarmCardState.seed
@@ -80,6 +102,9 @@ final class AlarmDashboardModel: ObservableObject {
     func create(_ alarm: AlarmCardState) {
         do {
             try repository.save(alarm.alarm)
+            if let armingStatus = alarm.armingStatus {
+                armingStatuses[alarm.id] = armingStatus
+            }
             let runId = UUID()
             runIDs[alarm.id] = runId
             lastExportedRunID = runId
@@ -104,6 +129,9 @@ final class AlarmDashboardModel: ObservableObject {
         do {
             backupScheduler.cancelBackup(for: alarm.id)
             try repository.save(alarm.alarm)
+            if let armingStatus = alarm.armingStatus {
+                armingStatuses[alarm.id] = armingStatus
+            }
             if !alarm.alarm.smartEnabled || !alarm.alarm.isEnabled {
                 connectivity.cancelAlarm(id: alarm.id)
             }
@@ -222,9 +250,10 @@ final class AlarmDashboardModel: ObservableObject {
     private func scheduleFallbackIfNeeded(for item: AlarmCardState, runId: UUID) {
         Task { @MainActor in
             let authorizationState = await authorizationStateForScheduling()
+            let alarmKitAuthorization = await alarmKitCapabilityProvider.authorizationState()
             let capabilities = BackupChannelCapabilities(
-                alarmKitSupported: false,
-                alarmKitAuthorization: .unavailable,
+                alarmKitSupported: alarmKitCapabilityProvider.isAlarmKitSupported,
+                alarmKitAuthorization: alarmKitAuthorization,
                 notificationAuthorization: authorizationState,
                 foregroundAudioAvailable: false
             )
@@ -277,6 +306,22 @@ final class AlarmDashboardModel: ObservableObject {
 
         guard let index = alarms.firstIndex(where: { $0.id == status.alarmId }) else { return }
         alarms[index].armingStatus = status
+    }
+
+    private func applySessionResult(_ payload: SessionResultPayload?) {
+        guard let payload else { return }
+        sessionResults[payload.alarmId] = payload
+        guard let index = alarms.firstIndex(where: { $0.id == payload.alarmId }) else { return }
+        alarms[index].sessionResult = payload
+        if payload.failureReason != nil || payload.state == .fallbackPhoneAlarm {
+            userVisibleWarning = "Watch runtime unavailable; iPhone fallback is active. \(payload.failureReason ?? "unknown_runtime_failure")"
+        }
+    }
+
+    private func applyRunLogSummary(_ payload: RunLogSummaryPayload?) {
+        guard let payload else { return }
+        runSummaries[payload.runId] = payload
+        latestRunSummary = payload
     }
 
     private func authorizationStateForScheduling() async -> AuthorizationState {

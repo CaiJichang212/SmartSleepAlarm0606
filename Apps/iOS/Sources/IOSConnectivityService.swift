@@ -4,7 +4,11 @@ import WatchConnectivity
 
 protocol PhoneConnectivityClient: AnyObject {
     var lastArmingStatus: WatchArmingStatus? { get }
+    var lastSessionResult: SessionResultPayload? { get }
+    var lastRunLogSummary: RunLogSummaryPayload? { get }
     var onArmingStatusChanged: ((WatchArmingStatus?) -> Void)? { get set }
+    var onSessionResultChanged: ((SessionResultPayload?) -> Void)? { get set }
+    var onRunLogSummaryChanged: ((RunLogSummaryPayload?) -> Void)? { get set }
     var outboundOutbox: [SmartSleepConnectivityMessage] { get }
     func sendAlarmConfig(_ payload: AlarmConfigPayload)
     func cancelAlarm(id: UUID)
@@ -12,7 +16,11 @@ protocol PhoneConnectivityClient: AnyObject {
 
 final class FakePhoneConnectivityClient: PhoneConnectivityClient {
     private(set) var lastArmingStatus: WatchArmingStatus?
+    private(set) var lastSessionResult: SessionResultPayload?
+    private(set) var lastRunLogSummary: RunLogSummaryPayload?
     var onArmingStatusChanged: ((WatchArmingStatus?) -> Void)?
+    var onSessionResultChanged: ((SessionResultPayload?) -> Void)?
+    var onRunLogSummaryChanged: ((RunLogSummaryPayload?) -> Void)?
     private(set) var outboundOutbox: [SmartSleepConnectivityMessage] = []
 
     func sendAlarmConfig(_ payload: AlarmConfigPayload) {
@@ -27,12 +35,26 @@ final class FakePhoneConnectivityClient: PhoneConnectivityClient {
         lastArmingStatus = status
         onArmingStatusChanged?(status)
     }
+
+    func deliverSessionResult(_ payload: SessionResultPayload) {
+        lastSessionResult = payload
+        onSessionResultChanged?(payload)
+    }
+
+    func deliverRunLogSummary(_ payload: RunLogSummaryPayload) {
+        lastRunLogSummary = payload
+        onRunLogSummaryChanged?(payload)
+    }
 }
 
 final class IOSConnectivityService: NSObject, ObservableObject, PhoneConnectivityClient {
     @Published private(set) var lastArmingStatus: WatchArmingStatus?
+    @Published private(set) var lastSessionResult: SessionResultPayload?
+    @Published private(set) var lastRunLogSummary: RunLogSummaryPayload?
     @Published private(set) var outboundOutbox: [SmartSleepConnectivityMessage] = []
     var onArmingStatusChanged: ((WatchArmingStatus?) -> Void)?
+    var onSessionResultChanged: ((SessionResultPayload?) -> Void)?
+    var onRunLogSummaryChanged: ((RunLogSummaryPayload?) -> Void)?
 
     private let session: WCSession?
     private let encoder = JSONEncoder()
@@ -77,9 +99,18 @@ final class IOSConnectivityService: NSObject, ObservableObject, PhoneConnectivit
     @MainActor
     private func receive(_ data: Data) {
         guard let message = try? decoder.decode(SmartSleepConnectivityMessage.self, from: data) else { return }
-        if case let .armingResult(payload) = message {
+        switch message {
+        case let .armingResult(payload):
             lastArmingStatus = payload.status
             onArmingStatusChanged?(payload.status)
+        case let .sessionResult(payload):
+            lastSessionResult = payload
+            onSessionResultChanged?(payload)
+        case let .runLogSummary(payload):
+            lastRunLogSummary = payload
+            onRunLogSummaryChanged?(payload)
+        case .alarmConfig, .alarmCancelled:
+            break
         }
     }
 }
