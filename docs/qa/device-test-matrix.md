@@ -13,6 +13,7 @@
 | Connectivity | Watch sends enable-confirmation result | iPhone status updates to Ready or Fallback | Requires paired real devices | Not tested |
 | Connectivity | Watch sends session result and run summary | iPhone card keeps arming status, debug area only shows latest summary | Simulator plus paired real devices | Not tested |
 | Runtime | Watch schedules runtime session | Runtime log records scheduled target start | Requires paired real devices | Not tested |
+| Preflight | Watch battery low or motion unavailable before arming | Watch fails closed, iPhone keeps fallback visible, session summary is exported | Partial via simulator and fakes | Pending |
 | Fallback | iPhone fallback notification scheduled | `AlarmChannelLog` records `iOSLocalNotification` | Simulator plus JSONL inspection | Not tested |
 | Notification | iPhone fallback fires under Silent Mode and Sleep Focus | User notices fallback alarm | Requires paired real devices | Not tested |
 | Ringer | Watch haptic feedback starts, snoozes, and stops | User can perceive haptic pattern on wrist | Requires paired real devices | Not tested |
@@ -45,7 +46,16 @@ Simulator tests only verify sampler wiring. On a real Apple Watch, verify that:
 - `SensorFreshness.motionSampleCount` increases at least once per second.
 - `motionLastSampleAgeSec > 2` is emitted by the stale tick and disables auto silence and gesture snooze without overwriting `completed`, `snoozed`, or `fallbackPhoneAlarm`.
 - Left wrist and right wrist produce usable rotation samples.
+- `SensorSummary` is exported at roughly 3-second windows and can be replayed with `gyroPeak`, `postureDelta`, and `motionContinuitySec`.
 - No HealthKit heart-rate sample is required for motion-only Smart Mode.
+
+## HealthKit Manual Device Note
+
+Simulator tests only cover the conservative mapper and query wiring. On a real Apple Watch, verify that:
+
+- Heart-rate authorization denied does not block Smart Mode arming.
+- A recent heart-rate sample maps to `SensorFreshness.hrLastSampleAgeSec <= 120`.
+- Missing or stale heart-rate data keeps `heartRateUsable == false` while motion freshness remains usable.
 
 ## P0 Reliability Chain Required Results
 

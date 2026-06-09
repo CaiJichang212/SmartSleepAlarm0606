@@ -56,6 +56,7 @@ targets:
         CFBundleDisplayName: SmartSleep
         CFBundleShortVersionString: "0.2"
         CFBundleVersion: "1"
+        NSHealthShareUsageDescription: Heart rate is used only as an optional Smart Mode boost and never as the sole wake signal.
         WKApplication: true
         WKCompanionAppBundleIdentifier: com.smartsleep.alarm
     settings:

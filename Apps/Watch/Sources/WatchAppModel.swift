@@ -14,6 +14,7 @@ final class WatchAppModel: ObservableObject {
     private let ringer: WatchAlarmRinging
     private let runLogger: WatchAlarmRunLogging
     private let sensorSampler: WatchSensorSampling
+    private let preflightChecker: WatchPreflightChecking
     private var runEngine: WatchAlarmRunEngine?
     private var ringTask: Task<Void, Never>?
     private var activeAlarmID: UUID?
@@ -24,13 +25,15 @@ final class WatchAppModel: ObservableObject {
         runtimeScheduler: RuntimeSessionScheduling = WatchRuntimeSessionScheduler(),
         ringer: WatchAlarmRinging = WatchAlarmRinger(),
         runLogger: WatchAlarmRunLogging = WatchAlarmRunLogger.temporary(),
-        sensorSampler: WatchSensorSampling = CoreMotionWatchSensorSampler()
+        sensorSampler: WatchSensorSampling = CoreMotionWatchSensorSampler(),
+        preflightChecker: WatchPreflightChecking = WatchPreflightChecker()
     ) {
         self.connectivity = connectivity
         self.runtimeScheduler = runtimeScheduler
         self.ringer = ringer
         self.runLogger = runLogger
         self.sensorSampler = sensorSampler
+        self.preflightChecker = preflightChecker
         self.lastConfig = connectivity.latestAlarmConfig
         self.runtimeScheduler.onLogUpdated = { [weak self] log in
             self?.handleRuntimeLogUpdate(log)
@@ -108,6 +111,35 @@ final class WatchAppModel: ObservableObject {
         let runId = UUID()
         activeAlarmID = config.alarm.id
         activeRunID = runId
+
+        let preflight = preflightChecker.check(nextFireAt: config.nextFireAt, now: Date())
+        guard preflight.canArmSmartMode else {
+            sessionScheduled = false
+            failureReason = preflight.failureReason ?? "watch_preflight_failed"
+            transitionState(
+                to: .fallbackPhoneAlarm,
+                reason: failureReason ?? "watch_preflight_failed",
+                errorCode: failureReason
+            )
+            let status = WatchArmingStatus(
+                alarmId: config.alarm.id,
+                isArmed: false,
+                sessionScheduled: false,
+                fallbackChannel: .iOSLocalNotification,
+                failureReason: failureReason
+            )
+            connectivity.sendArmingResult(ArmingResultPayload(alarmId: config.alarm.id, armedAt: Date(), status: status))
+            connectivity.sendSessionResult(SessionResultPayload(
+                alarmId: config.alarm.id,
+                runId: runId,
+                state: currentState,
+                scheduledAt: nil,
+                failureReason: failureReason
+            ))
+            sendRunSummary(outcome: nil, fallbackUsed: true)
+            return
+        }
+
         let runtimeLog = runtimeScheduler.schedule(for: config, runId: runId)
         try? runLogger.recordRuntimeSession(runtimeLog)
         sessionScheduled = runtimeLog.errorCode == nil

@@ -8,13 +8,15 @@ final class WatchAppModelTests: XCTestCase {
         let alarm = Alarm.fixture(smartEnabled: true)
         let payload = AlarmConfigPayload(
             alarm: alarm,
-            nextFireAt: Date(timeIntervalSince1970: 3_600)
+            nextFireAt: Date.now.addingTimeInterval(3_600)
         )
         let connectivity = FakeWatchConnectivityClient(latestAlarmConfig: payload)
+        let passingPreflight = makePassingPreflight()
         let model = WatchAppModel(
             connectivity: connectivity,
             runtimeScheduler: FakeRuntimeSessionScheduler(shouldSucceed: true),
-            ringer: FakeWatchAlarmRinger()
+            ringer: FakeWatchAlarmRinger(),
+            preflightChecker: passingPreflight
         )
 
         connectivity.deliverCancellation(for: UUID())
@@ -39,13 +41,15 @@ final class WatchAppModelTests: XCTestCase {
         let alarm = Alarm.fixture(smartEnabled: true)
         let payload = AlarmConfigPayload(
             alarm: alarm,
-            nextFireAt: Date(timeIntervalSince1970: 3_600)
+            nextFireAt: Date.now.addingTimeInterval(3_600)
         )
         let connectivity = FakeWatchConnectivityClient(latestAlarmConfig: payload)
+        let passingPreflight = makePassingPreflight()
         let model = WatchAppModel(
             connectivity: connectivity,
             runtimeScheduler: FakeRuntimeSessionScheduler(shouldSucceed: false),
-            ringer: FakeWatchAlarmRinger()
+            ringer: FakeWatchAlarmRinger(),
+            preflightChecker: passingPreflight
         )
 
         model.armCurrentAlarm()
@@ -76,14 +80,16 @@ final class WatchAppModelTests: XCTestCase {
         let alarm = Alarm.fixture(smartEnabled: true)
         let payload = AlarmConfigPayload(
             alarm: alarm,
-            nextFireAt: Date(timeIntervalSince1970: 3_600)
+            nextFireAt: Date.now.addingTimeInterval(3_600)
         )
         let connectivity = FakeWatchConnectivityClient(latestAlarmConfig: payload)
         let runtimeScheduler = FakeRuntimeSessionScheduler(shouldSucceed: true)
+        let passingPreflight = makePassingPreflight()
         let model = WatchAppModel(
             connectivity: connectivity,
             runtimeScheduler: runtimeScheduler,
-            ringer: FakeWatchAlarmRinger()
+            ringer: FakeWatchAlarmRinger(),
+            preflightChecker: passingPreflight
         )
 
         model.armCurrentAlarm()
@@ -99,14 +105,16 @@ final class WatchAppModelTests: XCTestCase {
         let alarm = Alarm.fixture(smartEnabled: true)
         let payload = AlarmConfigPayload(
             alarm: alarm,
-            nextFireAt: Date(timeIntervalSince1970: 3_600)
+            nextFireAt: Date.now.addingTimeInterval(3_600)
         )
         let connectivity = FakeWatchConnectivityClient(latestAlarmConfig: payload)
         let runtimeScheduler = FakeRuntimeSessionScheduler(shouldSucceed: true)
+        let passingPreflight = makePassingPreflight()
         let model = WatchAppModel(
             connectivity: connectivity,
             runtimeScheduler: runtimeScheduler,
-            ringer: FakeWatchAlarmRinger()
+            ringer: FakeWatchAlarmRinger(),
+            preflightChecker: passingPreflight
         )
 
         model.armCurrentAlarm()
@@ -137,19 +145,21 @@ final class WatchAppModelTests: XCTestCase {
         let alarm = Alarm.fixture(smartEnabled: true)
         let payload = AlarmConfigPayload(
             alarm: alarm,
-            nextFireAt: Date(timeIntervalSince1970: 3_600)
+            nextFireAt: Date.now.addingTimeInterval(3_600)
         )
         let connectivity = FakeWatchConnectivityClient(latestAlarmConfig: payload)
         let runtimeScheduler = FakeRuntimeSessionScheduler(shouldSucceed: true)
         let ringer = FakeWatchAlarmRinger()
         let logger = FakeWatchAlarmRunLogger()
         let sensorSampler = FakeWatchSensorSampler()
+        let passingPreflight = makePassingPreflight()
         let model = WatchAppModel(
             connectivity: connectivity,
             runtimeScheduler: runtimeScheduler,
             ringer: ringer,
             runLogger: logger,
-            sensorSampler: sensorSampler
+            sensorSampler: sensorSampler,
+            preflightChecker: passingPreflight
         )
 
         model.armCurrentAlarm()
@@ -194,16 +204,18 @@ final class WatchAppModelTests: XCTestCase {
         let alarm = Alarm.fixture(smartEnabled: true)
         let payload = AlarmConfigPayload(
             alarm: alarm,
-            nextFireAt: Date(timeIntervalSince1970: 3_600)
+            nextFireAt: Date.now.addingTimeInterval(3_600)
         )
         let connectivity = FakeWatchConnectivityClient(latestAlarmConfig: payload)
         let runtimeScheduler = FakeRuntimeSessionScheduler(shouldSucceed: true)
         let logger = FakeWatchAlarmRunLogger()
+        let passingPreflight = makePassingPreflight()
         let model = WatchAppModel(
             connectivity: connectivity,
             runtimeScheduler: runtimeScheduler,
             ringer: FakeWatchAlarmRinger(),
-            runLogger: logger
+            runLogger: logger,
+            preflightChecker: passingPreflight
         )
 
         model.armCurrentAlarm()
@@ -230,15 +242,17 @@ final class WatchAppModelTests: XCTestCase {
 
     func testStopAfterRuntimeRunSendsRunLogSummaryWithLoggerEventCount() {
         let alarm = Alarm.fixture(smartEnabled: true)
-        let payload = AlarmConfigPayload(alarm: alarm, nextFireAt: Date(timeIntervalSince1970: 3_600))
+        let payload = AlarmConfigPayload(alarm: alarm, nextFireAt: Date.now.addingTimeInterval(3_600))
         let connectivity = FakeWatchConnectivityClient(latestAlarmConfig: payload)
         let runtimeScheduler = FakeRuntimeSessionScheduler(shouldSucceed: true)
         let logger = FakeWatchAlarmRunLogger()
+        let passingPreflight = makePassingPreflight()
         let model = WatchAppModel(
             connectivity: connectivity,
             runtimeScheduler: runtimeScheduler,
             ringer: FakeWatchAlarmRinger(),
-            runLogger: logger
+            runLogger: logger,
+            preflightChecker: passingPreflight
         )
 
         model.armCurrentAlarm()
@@ -273,15 +287,17 @@ final class WatchAppModelTests: XCTestCase {
 
     func testRuntimeInvalidationSendsRunLogSummaryWithFallbackUsed() {
         let alarm = Alarm.fixture(smartEnabled: true)
-        let payload = AlarmConfigPayload(alarm: alarm, nextFireAt: Date(timeIntervalSince1970: 3_600))
+        let payload = AlarmConfigPayload(alarm: alarm, nextFireAt: Date.now.addingTimeInterval(3_600))
         let connectivity = FakeWatchConnectivityClient(latestAlarmConfig: payload)
         let runtimeScheduler = FakeRuntimeSessionScheduler(shouldSucceed: true)
         let logger = FakeWatchAlarmRunLogger()
+        let passingPreflight = makePassingPreflight()
         let model = WatchAppModel(
             connectivity: connectivity,
             runtimeScheduler: runtimeScheduler,
             ringer: FakeWatchAlarmRinger(),
-            runLogger: logger
+            runLogger: logger,
+            preflightChecker: passingPreflight
         )
 
         model.armCurrentAlarm()
@@ -313,9 +329,80 @@ final class WatchAppModelTests: XCTestCase {
         XCTAssertEqual(summary.eventCount, try logger.eventCount(runId: runId))
     }
 
+    func testLowBatteryPreflightFailsClosedBeforeSchedulingRuntime() {
+        let alarm = Alarm.fixture(smartEnabled: true)
+        let payload = AlarmConfigPayload(alarm: alarm, nextFireAt: Date.now.addingTimeInterval(3_600))
+        let connectivity = FakeWatchConnectivityClient(latestAlarmConfig: payload)
+        let runtimeScheduler = FakeRuntimeSessionScheduler(shouldSucceed: true)
+        let preflight = FakeWatchPreflightChecker(result: WatchPreflightResult(
+            canArmSmartMode: false,
+            batteryLevel: 0.08,
+            motionAvailable: true,
+            failureReason: "watch_battery_low"
+        ))
+        let model = WatchAppModel(
+            connectivity: connectivity,
+            runtimeScheduler: runtimeScheduler,
+            ringer: FakeWatchAlarmRinger(),
+            preflightChecker: preflight
+        )
+
+        model.armCurrentAlarm()
+
+        XCTAssertEqual(model.currentState, .fallbackPhoneAlarm)
+        XCTAssertFalse(model.sessionScheduled)
+        XCTAssertEqual(model.failureReason, "watch_battery_low")
+        XCTAssertNil(runtimeScheduler.lastRunID)
+        let arming = connectivity.outboundMessages.compactMap { message -> ArmingResultPayload? in
+            guard case let .armingResult(payload) = message else { return nil }
+            return payload
+        }.last
+        XCTAssertEqual(arming?.status.isArmed, false)
+        XCTAssertEqual(arming?.status.sessionScheduled, false)
+
+        let sessionResults = connectivity.outboundMessages.compactMap { message -> SessionResultPayload? in
+            guard case let .sessionResult(payload) = message else { return nil }
+            return payload
+        }
+        let sessionResult = try! XCTUnwrap(sessionResults.last)
+        XCTAssertEqual(sessionResult.alarmId, alarm.id)
+        XCTAssertEqual(sessionResult.state, .fallbackPhoneAlarm)
+        XCTAssertEqual(sessionResult.failureReason, "watch_battery_low")
+
+        let summaries = connectivity.outboundMessages.compactMap { message -> RunLogSummaryPayload? in
+            guard case let .runLogSummary(payload) = message else { return nil }
+            return payload
+        }
+        let summary = try! XCTUnwrap(summaries.last)
+        XCTAssertEqual(summary.runId, sessionResult.runId)
+        XCTAssertEqual(summary.finalState, .fallbackPhoneAlarm)
+        XCTAssertTrue(summary.fallbackUsed)
+    }
+
     private func flushMainActorWork() async {
         for _ in 0..<3 {
             await Task.yield()
         }
+    }
+
+    private func makePassingPreflight() -> FakeWatchPreflightChecker {
+        FakeWatchPreflightChecker(result: WatchPreflightResult(
+            canArmSmartMode: true,
+            batteryLevel: 0.80,
+            motionAvailable: true,
+            failureReason: nil
+        ))
+    }
+}
+
+final class FakeWatchPreflightChecker: WatchPreflightChecking {
+    var result: WatchPreflightResult
+
+    init(result: WatchPreflightResult) {
+        self.result = result
+    }
+
+    func check(nextFireAt: Date, now: Date) -> WatchPreflightResult {
+        result
     }
 }

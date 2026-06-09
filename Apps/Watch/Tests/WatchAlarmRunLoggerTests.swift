@@ -126,6 +126,25 @@ final class WatchAlarmRunLoggerTests: XCTestCase {
         XCTAssertEqual(try logger.eventCount(runId: runId), 2)
     }
 
+    func testLoggerExportsSensorSummaryEvents() throws {
+        let logger = try WatchAlarmRunLogger(logsDirectory: temporaryDirectoryURL())
+        var summary = SensorSummary.fixture(
+            motionContinuitySec: 12,
+            postureDelta: 30,
+            gyroPeak: 2,
+            stepDelta: 0,
+            interactionCount: 0,
+            hrDeltaFromBaseline: nil
+        )
+        let runId = UUID()
+        summary.runId = runId
+
+        try logger.recordSummary(summary)
+
+        let exported = try logger.export(runId: runId)
+        XCTAssertTrue(exported.contains("sensorSummary"))
+    }
+
     private func temporaryDirectoryURL() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

@@ -31,6 +31,70 @@ final class FakeWatchSensorSampler: WatchSensorSampling {
     }
 }
 
+struct MotionWindowSample: Equatable {
+    var timestamp: Date
+    var accelMagnitude: Double
+    var gyroMagnitude: Double
+    var attitudeRoll: Double
+    var attitudePitch: Double
+    var attitudeYaw: Double
+}
+
+struct MotionWindowAggregator {
+    let runId: UUID
+    let windowStart: Date
+    private(set) var samples: [MotionWindowSample] = []
+
+    mutating func append(_ sample: MotionWindowSample) {
+        samples.append(sample)
+    }
+
+    func summary(windowEnd: Date) -> SensorSummary {
+        let accel = samples.map(\.accelMagnitude)
+        let gyro = samples.map(\.gyroMagnitude)
+        let mean = accel.isEmpty ? 0 : accel.reduce(0, +) / Double(accel.count)
+        let variance = accel.isEmpty ? 0 : accel.map { pow($0 - mean, 2) }.reduce(0, +) / Double(accel.count)
+        let gyroMean = gyro.isEmpty ? 0 : gyro.reduce(0, +) / Double(gyro.count)
+        let peak = gyro.max() ?? 0
+        let postureDelta = Self.postureDeltaDegrees(samples)
+        let motionContinuitySec = samples.contains { $0.accelMagnitude > 0.2 || $0.gyroMagnitude > 0.5 }
+            ? windowEnd.timeIntervalSince(windowStart)
+            : 0
+        let stillnessDurationSec = !samples.isEmpty && samples.allSatisfy { $0.accelMagnitude < 0.05 && $0.gyroMagnitude < 0.1 }
+            ? windowEnd.timeIntervalSince(windowStart)
+            : 0
+
+        return SensorSummary(
+            runId: runId,
+            windowStart: windowStart,
+            windowEnd: windowEnd,
+            baselineHR: nil,
+            baselineMotion: mean,
+            accelMagnitudeMean: mean,
+            accelMagnitudeStd: sqrt(variance),
+            gyroMagnitudeMean: gyroMean,
+            gyroPeak: peak,
+            postureDelta: postureDelta,
+            motionContinuitySec: motionContinuitySec,
+            stillnessDurationSec: stillnessDurationSec,
+            stepDelta: 0,
+            screenWakeCount: 0,
+            interactionCount: 0,
+            missingDataDurationSec: 0,
+            batteryDelta: 0,
+            hrDeltaFromBaseline: nil
+        )
+    }
+
+    private static func postureDeltaDegrees(_ samples: [MotionWindowSample]) -> Double {
+        guard let first = samples.first, let last = samples.last else { return 0 }
+        let delta = abs(last.attitudeRoll - first.attitudeRoll)
+            + abs(last.attitudePitch - first.attitudePitch)
+            + abs(last.attitudeYaw - first.attitudeYaw)
+        return delta * 180 / .pi
+    }
+}
+
 final class CoreMotionWatchSensorSampler: WatchSensorSampling {
     var onFreshness: ((SensorFreshness) -> Void)?
     var onSummary: ((SensorSummary) -> Void)?
@@ -40,17 +104,17 @@ final class CoreMotionWatchSensorSampler: WatchSensorSampling {
     private var runId: UUID?
     private var sampleCount = 0
     private var lastSampleAt: Date?
-    private var windowStart: Date?
-    private var gyroPeak = 0.0
-    private var accelValues: [Double] = []
+    private var aggregator: MotionWindowAggregator?
+    private var lastSummaryAt: Date?
+    private let summaryWindowSec: TimeInterval = 3
 
     func start(runId: UUID) {
         self.runId = runId
         sampleCount = 0
         lastSampleAt = nil
-        windowStart = Date()
-        gyroPeak = 0
-        accelValues = []
+        let start = Date()
+        lastSummaryAt = start
+        aggregator = MotionWindowAggregator(runId: runId, windowStart: start)
 
         motionManager.deviceMotionUpdateInterval = 0.2
         motionManager.startDeviceMotionUpdates(to: .main) { [weak self] motion, _ in
@@ -60,10 +124,25 @@ final class CoreMotionWatchSensorSampler: WatchSensorSampling {
             self.lastSampleAt = now
             let accel = motion.userAcceleration
             let accelMagnitude = sqrt(accel.x * accel.x + accel.y * accel.y + accel.z * accel.z)
-            self.accelValues.append(accelMagnitude)
             let rotation = motion.rotationRate
             let gyroMagnitude = sqrt(rotation.x * rotation.x + rotation.y * rotation.y + rotation.z * rotation.z)
-            self.gyroPeak = max(self.gyroPeak, gyroMagnitude)
+            self.aggregator?.append(MotionWindowSample(
+                timestamp: now,
+                accelMagnitude: accelMagnitude,
+                gyroMagnitude: gyroMagnitude,
+                attitudeRoll: motion.attitude.roll,
+                attitudePitch: motion.attitude.pitch,
+                attitudeYaw: motion.attitude.yaw
+            ))
+
+            if let lastSummaryAt = self.lastSummaryAt,
+               now.timeIntervalSince(lastSummaryAt) >= self.summaryWindowSec,
+               let summary = self.aggregator?.summary(windowEnd: now),
+               !summary.isHighConfidenceEmptyWindow {
+                self.onSummary?(summary)
+                self.lastSummaryAt = now
+                self.aggregator = MotionWindowAggregator(runId: runId, windowStart: now)
+            }
 
             let freshness = SensorFreshness(
                 runId: runId,
@@ -111,6 +190,18 @@ final class CoreMotionWatchSensorSampler: WatchSensorSampling {
         freshnessTask?.cancel()
         freshnessTask = nil
         motionManager.stopDeviceMotionUpdates()
+        aggregator = nil
+        lastSummaryAt = nil
         runId = nil
+    }
+}
+
+private extension SensorSummary {
+    var isHighConfidenceEmptyWindow: Bool {
+        motionContinuitySec == 0
+            && accelMagnitudeMean == 0
+            && gyroMagnitudeMean == 0
+            && gyroPeak == 0
+            && postureDelta == 0
     }
 }
